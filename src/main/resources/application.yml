@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: proxy-capturing-trustmanager
+
+logging:
+  level:
+    root: INFO
+    com.example.proxygateway: DEBUG
+    org.apache.hc.client5.http: DEBUG
+    org.apache.hc.client5.http.wire: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+app:
+  truststore:
+    path: ./data/application-truststore.bcfks
+    password: changeit-bcfips-secure-store-2026
+    keystore-type: BCFKS

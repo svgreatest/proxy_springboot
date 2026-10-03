@@ -1,0 +1,1678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TLS Handshake, Java JSSE &amp; CapturingTrustManager Architecture Guide</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes packet-pulse {
+      0% { r: 5; opacity: 1; }
+      50% { r: 8; opacity: 0.6; }
+      100% { r: 5; opacity: 1; }
+    }
+    .travel-dot {
+      animation: packet-pulse 1s infinite ease-in-out;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+    .nav-tab.active {
+      background: #0284c7 !important;
+      color: #ffffff !important;
+      border-color: #38bdf8 !important;
+      box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
+    }
+    .sub-tab.active {
+      background: #0369a1 !important;
+      color: #ffffff !important;
+      border-color: #38bdf8 !important;
+    }
+    .concept-tab.active {
+      background: #334155 !important;
+      color: #38bdf8 !important;
+      border-color: #0284c7 !important;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased min-h-screen flex flex-col p-4 md:p-6 font-sans select-none">
+
+  <!-- TOP HEADER: TOPICS ONLY & ABSOLUTELY NOTHING ELSE -->
+  <header class="bg-slate-900 border border-slate-800 rounded-2xl p-3 shadow-2xl mb-4 flex flex-wrap items-center justify-between gap-3">
+    <!-- Topic Navigation Tabs -->
+    <nav class="flex flex-wrap items-center gap-2">
+      <button onclick="switchScreen('direct-tls')" id="tab-direct-tls" 
+              class="nav-tab active px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent">
+        <span>⚡ 1. Direct TLS Handshake</span>
+      </button>
+      <button onclick="switchScreen('java-tls-impl')" id="tab-java-tls-impl" 
+              class="nav-tab px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent text-slate-400 hover:text-slate-200">
+        <span>☕ 2. Java TLS &amp; Client APIs</span>
+      </button>
+      <button onclick="switchScreen('bcjsse-deep')" id="tab-bcjsse-deep" 
+              class="nav-tab px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent text-slate-400 hover:text-slate-200">
+        <span>🧩 3. What is BCJSSE?</span>
+      </button>
+      <button onclick="switchScreen('capturing-deep')" id="tab-capturing-deep" 
+              class="nav-tab px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent text-slate-400 hover:text-slate-200">
+        <span>🛡️ 4. CapturingTM Program Flow</span>
+      </button>
+      <button onclick="switchScreen('https-forward')" id="tab-https-forward" 
+              class="nav-tab px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent text-slate-400 hover:text-slate-200">
+        <span>🔒 5. HTTPS Proxy (:8443)</span>
+      </button>
+      <button onclick="switchScreen('mitm')" id="tab-mitm" 
+              class="nav-tab px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent text-slate-400 hover:text-slate-200">
+        <span>🕵️ 6. MITM Proxy (:8888)</span>
+      </button>
+    </nav>
+
+    <!-- Protocol Sub-Toggle (Active only in Direct TLS) -->
+    <div id="tls-version-subtoggle" class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+      <span class="text-xs font-mono text-slate-400 px-2 font-bold">Protocol:</span>
+      <button onclick="switchTlsVersion('tls13')" id="btn-tls13" class="sub-tab active px-3 py-1 rounded-lg text-xs font-bold transition border border-transparent">
+        TLS 1.3 (1-RTT)
+      </button>
+      <button onclick="switchTlsVersion('tls12')" id="btn-tls12" class="sub-tab px-3 py-1 rounded-lg text-xs font-bold transition border border-transparent text-slate-400 hover:text-slate-200">
+        TLS 1.2 (2-RTT)
+      </button>
+    </div>
+  </header>
+
+  <!-- SPLIT MAIN WORKSPACE -->
+  <main class="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 items-start">
+
+    <!-- LEFT 7 COLS: ANIMATED SVG SEQUENCE CANVAS (LARGE, PROMINENT TYPOGRAPHY) -->
+    <section class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col space-y-3 relative overflow-hidden">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Sequence Diagram</span>
+          <span class="text-xs text-sky-400 font-mono font-bold" id="diagram-title">Direct TLS 1.3 Handshake (RFC 8446 - Pure Wire Protocol)</span>
+        </div>
+        <div class="text-xs text-slate-400 flex items-center gap-3">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-sky-400 inline-block"></span> Wire Packet</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block"></span> Handshake Msg</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span> Cert / Auth</span>
+        </div>
+      </div>
+
+      <!-- Scaled SVG Canvas -->
+      <div class="relative bg-slate-950 rounded-xl border border-slate-800/80 p-3 overflow-x-auto min-h-[460px] flex items-center justify-center" id="svg-wrapper">
+        <svg id="sequence-svg" viewBox="0 0 840 460" class="w-full h-auto" xmlns="http://www.w3.org/2000/svg">
+          <!-- Injected dynamically -->
+        </svg>
+      </div>
+
+      <!-- Current Step Status Banner -->
+      <div id="step-callout" class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <span id="callout-icon" class="text-lg">⚡</span>
+          <span id="callout-title" class="font-bold text-sm text-sky-300">Client Sends ClientHello</span>
+        </div>
+        <span id="callout-stage" class="text-xs font-mono uppercase px-2.5 py-1 rounded-md bg-sky-500/20 text-sky-400 border border-sky-500/30">TARGET_TLS</span>
+      </div>
+    </section>
+
+    <!-- RIGHT 5 COLS: CONCEPTUAL CARDS WITH CONCRETE EXAMPLES -->
+    <section class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col space-y-3">
+      
+      <!-- TOP INTERACTIVE CONCEPT DEEP-DIVE -->
+      <div id="screen-concept-box" class="bg-slate-950 rounded-xl border border-slate-800 p-3 space-y-2">
+        <!-- Injected dynamically per screen -->
+      </div>
+
+      <div class="flex items-center justify-between pb-1.5 border-b border-slate-800">
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Step Details &amp; Wire Mechanics</span>
+        <span id="explainer-category" class="px-2 py-0.5 rounded text-[11px] font-bold uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+          RFC Wire Standard
+        </span>
+      </div>
+
+      <!-- Cards Container -->
+      <div class="space-y-3 custom-scroll overflow-y-auto max-h-[520px]" id="explainer-cards-container">
+        <!-- Injected dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- JAVASCRIPT SIMULATION LOGIC -->
+  <script>
+    // =========================================================================
+    // 1. ACTORS DEFINITIONS PER SCREEN (BALANCED FOR 840px CANVAS)
+    // =========================================================================
+    // Screen 1: Pure RFC Wire Handshake (Client <-> Server)
+    const actorsDirect = [
+      { id: "client", name: "TLS Client", sub: "Web Client / App", x: 210, color: "#38bdf8" },
+      { id: "target", name: "TLS Server", sub: "httpbin.org:443", x: 630, color: "#f87171" }
+    ];
+
+    // Screen 2: How Java Implements TLS & Client APIs
+    const actorsJavaTls = [
+      { id: "app", name: "Client App", sub: "HttpClient / RestTemplate", x: 105, color: "#38bdf8" },
+      { id: "api", name: "javax.net.ssl", sub: "SSLContext / SocketFactory", x: 315, color: "#a855f7" },
+      { id: "engine", name: "JSSE Engine", sub: "Handshake State Machine", x: 525, color: "#38bdf8" },
+      { id: "tm", name: "TrustManager", sub: "X509TrustManager / PKIX", x: 735, color: "#34d399" }
+    ];
+
+    // Screen 3: What is BCJSSE?
+    const actorsBcjsse = [
+      { id: "app", name: "Java App", sub: "HttpClient / Socket", x: 105, color: "#38bdf8" },
+      { id: "jsse", name: "javax.net.ssl", sub: "Standard Java API", x: 315, color: "#38bdf8" },
+      { id: "bcjsse", name: "BCJSSE Provider", sub: "Wire / State Machine", x: 525, color: "#c084fc" },
+      { id: "bcfips", name: "BCFIPS Core", sub: "Certified Math Box", x: 735, color: "#fbbf24" }
+    ];
+
+    // Screen 4: CapturingTM Java Program Lifecycle
+    const actorsCapturingProg = [
+      { id: "app", name: "Spring Boot App", sub: "ProxyProbeService", x: 105, color: "#38bdf8" },
+      { id: "tm", name: "CapturingTM", sub: "DelegatingTM", x: 315, color: "#34d399" },
+      { id: "ctx", name: "CaptureContext", sub: "ThreadLocal State", x: 525, color: "#c084fc" },
+      { id: "store", name: "BCFKS Keystore", sub: "Master / Ephemeral", x: 735, color: "#fbbf24" }
+    ];
+
+    // Screen 5: HTTPS Forward Proxy (:8443)
+    const actorsHttpsForward = [
+      { id: "client", name: "Client App", sub: "HttpClient 5", x: 85, color: "#38bdf8" },
+      { id: "bcjsse", name: "BCJSSE Provider", sub: "ProvTlsClient", x: 245, color: "#c084fc" },
+      { id: "trustmgr", name: "CapturingTM", sub: "TrustManager", x: 420, color: "#34d399" },
+      { id: "proxy", name: "Squid HTTPS", sub: "127.0.0.1:8443", x: 595, color: "#fbbf24" },
+      { id: "target", name: "Target Server", sub: "httpbin.org:443", x: 755, color: "#f87171" }
+    ];
+
+    // Screen 6: MITM Inspection Proxy (:8888)
+    const actorsMitm = [
+      { id: "client", name: "Client App", sub: "HttpClient / App", x: 105, color: "#38bdf8" },
+      { id: "trustmgr", name: "Java TLS / CapturingTM", sub: "JSSE TrustManager", x: 315, color: "#34d399" },
+      { id: "proxy", name: "MITM Proxy", sub: "mitmproxy :8888", x: 525, color: "#f59e0b" },
+      { id: "target", name: "Real Server", sub: "httpbin.org:443", x: 735, color: "#f87171" }
+    ];
+
+    // =========================================================================
+    // 2. SCENARIO DATA: DIRECT TLS 1.3 (PURE WIRE PROTOCOL)
+    // =========================================================================
+    const scenarioTls13 = [
+      {
+        step: 0, stage: "TCP_LAYER", from: "client", to: "target",
+        msg: "1. TCP 3-Way Handshake (SYN -> SYN-ACK -> ACK)", type: "tcp",
+        callout: { icon: "🔌", title: "Layer 4 TCP Connection Established" },
+        cards: [
+          {
+            title: "TCP Stream Opened",
+            body: "A raw TCP socket connects to httpbin.org on port 443 before TLS cryptographic bytes begin.",
+            example: "Network Packet: SYN -> SYN-ACK -> ACK\nPort: 443 (Standard HTTPS)",
+            tag: "Layer 4"
+          }
+        ],
+        wire: { type: "TCP Handshake", bytes: "SYN -> SYN-ACK -> ACK (httpbin.org:443)", desc: "TCP stream ready" },
+        chain: [], authType: { val: "N/A", kex: "TCP", ku: "N/A" },
+        anchor: { state: "READY", name: "Waiting for TLS", isCand: "false" }
+      },
+      {
+        step: 1, stage: "KEY_EXCHANGE", from: "client", to: "target",
+        msg: "2. ClientHello + KeyShare (X25519 Ephemeral Key)", type: "tls",
+        callout: { icon: "⚡", title: "Client Sends ClientHello with Ephemeral KeyShare" },
+        cards: [
+          {
+            title: "How ECDHE Starts: Speculative KeyShare",
+            body: "In TLS 1.3, the client generates temporary EC keypair (c_priv, C_pub) and transmits C_pub immediately in the key_share extension.",
+            example: "CipherSuites: [TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256]\nKeyShare: curve=x25519, public_key=3d8f2b7a9...\nSNI: httpbin.org",
+            tag: "1-RTT Key Exchange"
+          }
+        ],
+        wire: { type: "Record 0x16 (Handshake)", bytes: "16 03 03 00 D0 [ClientHello: KeyShare X25519]", desc: "Speculative KeyShare sent" },
+        chain: [], authType: { val: "UNKNOWN", kex: "ECDHE (X25519)", ku: "N/A" },
+        anchor: { state: "HANDSHAKE", name: "Negotiating", isCand: "false" }
+      },
+      {
+        step: 2, stage: "KEY_EXCHANGE", from: "target", to: "client",
+        msg: "3. ServerHello + KeyShare (Shared Secret Derived!)", type: "tls",
+        callout: { icon: "🔑", title: "Shared Secret Computed: S = c_priv * S_pub = s_priv * C_pub" },
+        cards: [
+          {
+            title: "Diffie-Hellman Key Agreement Complete",
+            body: "Server generates (s_priv, S_pub) and replies with S_pub. Both sides independently calculate: Shared Secret = c_priv * S_pub = s_priv * C_pub! Secret was NEVER sent over the wire.",
+            example: "Selected: TLS_AES_256_GCM_SHA384\nServer KeyShare: curve=x25519, public_key=7c4a11f2...\nSharedSecret = ECDH(c_priv, S_pub)\nKeys Derived & Handshake Encrypted Instantly!",
+            tag: "PFS Active"
+          }
+        ],
+        wire: { type: "Record Type 22", bytes: "16 03 03 00 76 [ServerHello + Server KeyShare]", desc: "Keys derived instantly" },
+        chain: [], authType: { val: "UNKNOWN", kex: "AES-256-GCM Derived", ku: "N/A" },
+        anchor: { state: "KEYS COMPUTED", name: "Awaiting Encrypted Certs", isCand: "false" }
+      },
+      {
+        step: 3, stage: "ENCRYPTED_HANDSHAKE", from: "target", to: "client",
+        msg: "4. EncryptedExtensions (ALPN, Parameters)", type: "tls",
+        callout: { icon: "🔒", title: "EncryptedExtensions: Server Confirms Protocol" },
+        cards: [
+          {
+            title: "Server Parameters Encrypted",
+            body: "The server confirms application layer protocol (e.g., HTTP/1.1 or h2) inside an encrypted TLS record.",
+            example: "Record: 17 03 03 [Encrypted: EncryptedExtensions ALPN='http/1.1']",
+            tag: "RFC 8446"
+          }
+        ],
+        wire: { type: "Encrypted Msg 08", bytes: "17 03 03 00 30 [Encrypted: EncryptedExtensions]", desc: "Encrypted parameters" },
+        chain: [], authType: { val: "UNKNOWN", kex: "ECDHE", ku: "N/A" },
+        anchor: { state: "EXTENSIONS", name: "ALPN Verified", isCand: "false" }
+      },
+      {
+        step: 4, stage: "AUTHENTICATION", from: "target", to: "client",
+        msg: "5. Encrypted Certificate (Leaf: httpbin.org + Intermediate CA)", type: "cert",
+        callout: { icon: "📜", title: "Server Transmits Encrypted Certificate Chain" },
+        cards: [
+          {
+            title: "Where RSA Fits In: The Certificate Identity",
+            body: "The server presents its certificate containing its RSA public key. This key is NOT used for key exchange! It is used solely to authenticate identity in the next step.",
+            example: "chain[0] = Subject: CN=httpbin.org, isCA=false (RSA 2048-bit)\nchain[1] = Subject: CN=Amazon RSA 2048 M02, isCA=true (Intermediate CA)",
+            tag: "Encrypted Wire"
+          }
+        ],
+        wire: { type: "Encrypted Msg 11", bytes: "17 03 03 0A C0 [Encrypted: Certificate Msg with 2 certs]", desc: "Encrypted certificate chain" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "UNKNOWN", kex: "ECDHE", ku: "digitalSignature" },
+        anchor: { state: "PARSED", name: "Awaiting Verification", isCand: "false" }
+      },
+      {
+        step: 5, stage: "AUTHENTICATION", from: "target", to: "client",
+        msg: "6. CertificateVerify (RSA Signature over Transcript)", type: "cert",
+        callout: { icon: "✍️", title: "THIS IS HOW RSA FITS IN: Digital Signature Proof" },
+        cards: [
+          {
+            title: "RSA is the Digital Signature!",
+            body: "To prove ownership of httpbin.org, server signs the entire transcript with its private RSA key. Client verifies with the RSA public key from the certificate.",
+            example: "Signature = RSA_PSS_Sign(server_rsa_priv_key, transcript_hash)\nClient verifies: RSA_PSS_Verify(cert_rsa_pub_key, Signature)\n--> Proves S_pub genuinely belongs to httpbin.org!",
+            tag: "RSA Proof of Identity"
+          }
+        ],
+        wire: { type: "Encrypted Msg 15", bytes: "17 03 03 01 10 [Encrypted: CertificateVerify (RSA-PSS Signature)]", desc: "Identity authenticated" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "UNKNOWN", kex: "ECDHE", ku: "Signature Valid" },
+        anchor: { state: "AUTHENTICATED", name: "Amazon Root CA 1", isCand: "false" }
+      },
+      {
+        step: 6, stage: "AUTHENTICATION", from: "target", to: "client",
+        msg: "7. Finished Message (HMAC Transcript Verification)", type: "tls",
+        callout: { icon: "🏁", title: "Handshake Integrity Confirmed & Locked" },
+        cards: [
+          {
+            title: "Handshake Integrity Confirmed",
+            body: "Server sends HMAC verify_data over all previous messages to prevent tampering. Client confirms and handshake is complete in 1-RTT!",
+            example: "verify_data = HMAC-SHA384(finished_key, HandshakeTranscript)",
+            tag: "1-RTT Complete"
+          }
+        ],
+        wire: { type: "Encrypted Msg 20", bytes: "17 03 03 00 30 [Encrypted: Finished Msg]", desc: "Handshake locked" },
+        chain: [], authType: { val: "UNKNOWN", kex: "AES-256-GCM", ku: "Active" },
+        anchor: { state: "HANDSHAKE FINISHED", name: "Amazon Root CA 1", isCand: "false" }
+      },
+      {
+        step: 7, stage: "DATA_PHASE", from: "client", to: "target",
+        msg: "8. Encrypted Application Data: GET /get HTTP/1.1 -> 200 OK", type: "tunnel",
+        callout: { icon: "🚀", title: "Encrypted HTTP Request & Response Delivered" },
+        cards: [
+          {
+            title: "Symmetric Bulk Encryption",
+            body: "Application payload is encrypted with symmetric AES-256-GCM keys. Fast, secure, and authenticated.",
+            example: "GET /get HTTP/1.1 -> HTTP/1.1 200 OK (AES-256-GCM ciphertext)",
+            tag: "AES-256-GCM"
+          }
+        ],
+        wire: { type: "Record 23", bytes: "17 03 03 [GET /get] -> 17 03 03 [200 OK]", desc: "Data delivered" },
+        chain: [], authType: { val: "Complete", kex: "AES-256-GCM", ku: "Success" },
+        anchor: { state: "COMPLETE ✅", name: "Amazon Root CA 1", isCand: "false" }
+      }
+    ];
+
+    // =========================================================================
+    // 3. SCENARIO DATA: DIRECT TLS 1.2 (PURE WIRE PROTOCOL)
+    // =========================================================================
+    const scenarioTls12 = [
+      {
+        step: 0, stage: "TCP_LAYER", from: "client", to: "target",
+        msg: "1. TCP 3-Way Handshake (SYN -> SYN-ACK -> ACK)", type: "tcp",
+        callout: { icon: "🔌", title: "TCP Socket Stream Connected" },
+        cards: [{ title: "TCP Layer", body: "Raw TCP connection to destination on port 443.", example: "SYN -> SYN-ACK -> ACK", tag: "TCP" }],
+        wire: { type: "TCP Handshake", bytes: "SYN -> SYN-ACK -> ACK", desc: "TCP socket ready" },
+        chain: [], authType: { val: "N/A", kex: "TCP", ku: "N/A" }, anchor: { state: "READY", name: "Waiting for TLS", isCand: "false" }
+      },
+      {
+        step: 1, stage: "KEY_EXCHANGE", from: "client", to: "target",
+        msg: "2. TLS 1.2 ClientHello (Cipher Proposals)", type: "tls",
+        callout: { icon: "🤝", title: "Client Proposes TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" },
+        cards: [
+          {
+            title: "TLS 1.2 Suite Naming",
+            body: "In TLS 1.2, the suite name explicitly names Key Exchange (ECDHE) and Authentication (RSA). Notice no KeyShare is sent yet (unlike TLS 1.3)!",
+            example: "Proposes: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256\n- ECDHE = Key Exchange Algorithm\n- RSA = Authentication (Signature) Algorithm\n- AES_128_GCM = Bulk Encryption",
+            tag: "RFC 5246"
+          }
+        ],
+        wire: { type: "Record 0x16", bytes: "16 03 03 00 90 [ClientHello: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256]", desc: "Cipher proposals" },
+        chain: [], authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" }, anchor: { state: "NEGOTIATING", name: "Proposing ciphers", isCand: "false" }
+      },
+      {
+        step: 2, stage: "KEY_EXCHANGE", from: "target", to: "client",
+        msg: "3. ServerHello + Cleartext Certificate Chain", type: "cert",
+        callout: { icon: "📜", title: "ServerHello & Cleartext Certificates Transmitted" },
+        cards: [
+          {
+            title: "Cleartext Certificates in TLS 1.2",
+            body: "In TLS 1.2, certificates are sent in plaintext! Eavesdroppers can see the server's certificate on the network.",
+            example: "Handshake Msg 11: Leaf (CN=httpbin.org) -> Intermediate (CN=Amazon RSA 2048 M02)",
+            tag: "Cleartext Wire"
+          }
+        ],
+        wire: { type: "Handshake Msg 02 & 11", bytes: "02 [ServerHello] -> 0B [Certificate (Cleartext)]", desc: "Server parameters" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" }, anchor: { state: "PARSED", name: "Certificates Received", isCand: "false" }
+      },
+      {
+        step: 3, stage: "KEY_EXCHANGE", from: "target", to: "client",
+        msg: "4. ServerKeyExchange (ECDH Params Signed with Server RSA Key)", type: "cert",
+        callout: { icon: "✍️", title: "WHERE RSA FITS IN: Server Signs ECDH Parameters" },
+        cards: [
+          {
+            title: "ECDHE Parameters + RSA Signature",
+            body: "The server transmits its ephemeral ECDH parameters (curve, pubkey). To prove they are authentic, the server uses its RSA private key to SIGN these parameters! The client verifies the signature with the RSA public key from the certificate.",
+            example: "ServerKeyExchange:\n- Curve: secp256r1, PubKey: 04a1b2...\n- Digital Signature: RSA_Sign(Server_RSA_PrivKey, ECDH_Params)\n--> Proves parameters came from httpbin.org!",
+            tag: "ECDHE_RSA Proof"
+          }
+        ],
+        wire: { type: "Handshake Msg 12", bytes: "0C [ServerKeyExchange: curve=secp256r1 + RSA Signature]", desc: "Signed key exchange" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature verified" }, anchor: { state: "AUTHENTICATED", name: "Amazon Root CA 1", isCand: "false" }
+      },
+      {
+        step: 4, stage: "KEY_EXCHANGE", from: "client", to: "target",
+        msg: "5. ClientKeyExchange + ChangeCipherSpec + Finished", type: "tls",
+        callout: { icon: "🔑", title: "Round-Trip 2: Client Sends ECDH Key & Derives Session Keys" },
+        cards: [
+          {
+            title: "2-RTT Complete",
+            body: "Client transmits its ephemeral ECDH public key, switches to encrypted mode with ChangeCipherSpec, and sends Finished.",
+            example: "ClientKeyExchange: Client_ECDH_PubKey\nShared Secret derived by both parties!\nChangeCipherSpec: 0x01",
+            tag: "2-RTT Keys"
+          }
+        ],
+        wire: { type: "Handshake Msg 16 & CCS", bytes: "10 [ClientKeyExchange] -> 14 [ChangeCipherSpec] -> [Finished]", desc: "Keys activated" },
+        chain: [], authType: { val: "ECDHE_RSA", kex: "Keys Derived", ku: "Active" }, anchor: { state: "FINISHED", name: "Session Active", isCand: "false" }
+      },
+      {
+        step: 5, stage: "DATA_PHASE", from: "target", to: "client",
+        msg: "6. Server CCS + Finished -> Application Data Flows", type: "tunnel",
+        callout: { icon: "🚀", title: "TLS 1.2 Session Established & Application Data Flows" },
+        cards: [
+          {
+            title: "Encrypted Application Data",
+            body: "Server activates encryption and both parties begin exchanging encrypted HTTP traffic via AES-128-GCM.",
+            example: "GET /get HTTP/1.1 -> HTTP/1.1 200 OK",
+            tag: "Success"
+          }
+        ],
+        wire: { type: "Record 23", bytes: "GET /get -> HTTP/1.1 200 OK", desc: "Data delivered" },
+        chain: [], authType: { val: "Complete", kex: "AES-128-GCM", ku: "Success" }, anchor: { state: "COMPLETE ✅", name: "Amazon Root CA 1", isCand: "false" }
+      }
+    ];
+
+    // =========================================================================
+    // 4. SCENARIO DATA: HOW JAVA IMPLEMENTS TLS & CLIENT APIS
+    // =========================================================================
+    const scenarioJavaTlsImpl = [
+      {
+        step: 0, stage: "JAVA_INIT", from: "app", to: "api",
+        msg: "1. Configure SSLContext(TrustManager)", type: "tcp",
+        callout: { icon: "⚙️", title: "App Configures Java SSLContext (Standard javax.net.ssl)" },
+        cards: [
+          {
+            title: "Java SSLContext Initialization",
+            body: "The application initializes standard Java SSL APIs. It configures the trust manager (which holds the BCFKS keystore) and asks for the 'TLS' protocol.",
+            example: "TrustManagerFactory tmf = TrustManagerFactory.getInstance(\"PKIX\", \"BCJSSE\");\ntmf.init(keyStore);\n\nSSLContext sslContext = SSLContext.getInstance(\"TLS\", \"BCJSSE\");\nsslContext.init(null, tmf.getTrustManagers(), new SecureRandom());",
+            tag: "javax.net.ssl"
+          }
+        ],
+        wire: { type: "JVM API Call", bytes: "SSLContext.getInstance(\"TLS\", \"BCJSSE\").init(null, tmf, sr)", desc: "SSLContext armed" },
+        chain: [], authType: { val: "N/A", kex: "JVM Config", ku: "N/A" },
+        anchor: { state: "INITIALIZED", name: "144 Master Anchors in Keystore", isCand: "false" }
+      },
+      {
+        step: 1, stage: "JAVA_SOCKET", from: "app", to: "api",
+        msg: "2. SSLSocketFactory.createSocket()", type: "tcp",
+        callout: { icon: "🔌", title: "Socket Factory Creates Wrapped SSLSocket" },
+        cards: [
+          {
+            title: "Layering SSLSocket over TCP",
+            body: "The client HTTP library (Apache HttpClient, RestTemplate, WebClient) obtains an SSLSocketFactory from the SSLContext and creates the connected socket.",
+            example: "SSLSocketFactory sf = sslContext.getSocketFactory();\nSSLSocket socket = (SSLSocket) sf.createSocket(\"httpbin.org\", 443);\nsocket.setEnabledProtocols(new String[]{\"TLSv1.3\", \"TLSv1.2\"});",
+            tag: "SSLSocket"
+          }
+        ],
+        wire: { type: "JVM Socket Creation", bytes: "sf.createSocket(\"httpbin.org\", 443)", desc: "Connected SSLSocket created" },
+        chain: [], authType: { val: "N/A", kex: "Socket Open", ku: "N/A" },
+        anchor: { state: "SOCKET READY", name: "Connected to Port 443", isCand: "false" }
+      },
+      {
+        step: 2, stage: "JAVA_HANDSHAKE", from: "app", to: "engine",
+        msg: "3. socket.startHandshake()", type: "tls",
+        callout: { icon: "⚡", title: "Handshake Started: JSSE State Machine Takes Over" },
+        cards: [
+          {
+            title: "Java Handshake Execution",
+            body: "The first I/O operation (or explicit startHandshake() call) triggers the JSSE protocol state machine. Java begins transmitting and receiving TLS records.",
+            example: "socket.startHandshake();\n// JSSE formats ClientHello packet and writes to underlying SocketOutputStream",
+            tag: "startHandshake()"
+          }
+        ],
+        wire: { type: "JSSE Execution", bytes: "socket.startHandshake() -> Writing ClientHello record", desc: "Handshake initiated" },
+        chain: [], authType: { val: "N/A", kex: "Handshake State Machine", ku: "N/A" },
+        anchor: { state: "HANDSHAKE ACTIVE", name: "Negotiating with Server", isCand: "false" }
+      },
+      {
+        step: 3, stage: "JAVA_CERTS", from: "engine", to: "engine",
+        msg: "4. Parse ASN.1 to X509Certificate[]", type: "cert",
+        callout: { icon: "📜", title: "JSSE Converts Wire Bytes into Java X509Certificate Objects" },
+        cards: [
+          {
+            title: "ASN.1 DER Parsing by CertificateFactory",
+            body: "When the server Certificate message arrives, JSSE uses Java's CertificateFactory to parse raw ASN.1 DER byte arrays into an array of java.security.cert.X509Certificate objects.",
+            example: "CertificateFactory cf = CertificateFactory.getInstance(\"X.509\");\nX509Certificate[] chain = parseCertificates(recordBytes);\n// chain[0] = Leaf (httpbin.org)\n// chain[1] = Intermediate (Amazon RSA 2048 M02)",
+            tag: "X509Certificate[]"
+          }
+        ],
+        wire: { type: "Internal Object Creation", bytes: "X509Certificate[] chain created (length=2)", desc: "Peer certificates parsed" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "UNKNOWN", kex: "ECDHE", ku: "digitalSignature" },
+        anchor: { state: "PARSED", name: "Preparing checkServerTrusted", isCand: "false" }
+      },
+      {
+        step: 4, stage: "JAVA_VERIFY", from: "engine", to: "tm",
+        msg: "5. checkServerTrusted(chain, authType)", type: "cert",
+        callout: { icon: "🛡️", title: "THIS IS WHERE checkServerTrusted() RUNS!" },
+        cards: [
+          {
+            title: "How authType is Passed by Java",
+            body: "JSSE invokes the configured TrustManager. If TLS 1.3 is negotiated, authType is passed as 'UNKNOWN'. If TLS 1.2 is negotiated, authType is passed as 'ECDHE_RSA'.",
+            example: "// JSSE calls your TrustManager:\ntrustManager.checkServerTrusted(chain, \"UNKNOWN\", socket);\n\n// Java KeyChecker evaluates:\n// If authType=='ECDHE_RSA' -> demands KeyUsage[digitalSignature]\n// If authType=='RSA' -> demands KeyUsage[keyEncipherment]",
+            tag: "checkServerTrusted"
+          },
+          {
+            title: "CapturingTrustManager Interception Point",
+            body: "Our CapturingTrustManager sits right here! It intercepts chain[] and authType, saves them into HandshakeCaptureContext, and delegates to the active PKIX validator.",
+            example: "state.setTargetChain(chain);\ndelegate.checkServerTrusted(chain, authType, socket);",
+            tag: "CapturingTM"
+          }
+        ],
+        wire: { type: "JVM SPI Method Call", bytes: "checkServerTrusted(chain[2], authType=\"UNKNOWN\", socket)", desc: "TrustManager invoked" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "UNKNOWN (TLS 1.3)", kex: "No KEX in suite", ku: "digitalSignature verified" },
+        anchor: { state: "VALIDATING", name: "PKIX Path Building...", isCand: "false" }
+      },
+      {
+        step: 5, stage: "JAVA_VERIFY", from: "tm", to: "engine",
+        msg: "6. Path Validated (Amazon Root CA 1)", type: "cert",
+        callout: { icon: "✅", title: "PKIX Path Built: Root Anchor Confirmed" },
+        cards: [
+          {
+            title: "PKIX Path Validation Success",
+            body: "The TrustManager verifies digital signatures from Leaf -> Intermediate -> Amazon Root CA 1 in the BCFKS keystore. If untrusted, a CertificateException is thrown.",
+            example: "CertPathValidator.getInstance(\"PKIX\").validate(certPath, pkixParams);\n--> Path building successful: Validated against 'Amazon Root CA 1'",
+            tag: "PKIX Validated"
+          }
+        ],
+        wire: { type: "Internal Return", bytes: "checkServerTrusted() returns normally (void)", desc: "Trust established" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "UNKNOWN", kex: "ECDHE", ku: "digitalSignature verified" },
+        anchor: { state: "VALIDATED ✅", name: "Amazon Root CA 1", isCand: "false (Persistent Store)" }
+      },
+      {
+        step: 6, stage: "JAVA_IO", from: "engine", to: "app",
+        msg: "7. Socket Ready -> Encrypted HTTP", type: "tunnel",
+        callout: { icon: "🚀", title: "App Performs Secure HTTP Request/Response" },
+        cards: [
+          {
+            title: "Application Secure I/O",
+            body: "The handshake finishes. The app obtains socket.getInputStream() and socket.getOutputStream(). Transparent encryption and decryption happen automatically under the hood.",
+            example: "OutputStream out = socket.getOutputStream();\nout.write(\"GET /get HTTP/1.1\\r\\nHost: httpbin.org\\r\\n\\r\\n\".getBytes());\n\nInputStream in = socket.getInputStream();\n// Reads decrypted HTTP 200 OK JSON response!",
+            tag: "Secure I/O"
+          }
+        ],
+        wire: { type: "App Data", bytes: "socket.getOutputStream().write() -> Encrypted Record 23", desc: "Encrypted HTTP" },
+        chain: [], authType: { val: "Active Session", kex: "AES-256-GCM", ku: "Encrypted Stream" },
+        anchor: { state: "COMPLETE ✅", name: "Amazon Root CA 1", isCand: "false" }
+      }
+    ];
+
+    // =========================================================================
+    // 5. SCENARIO DATA: WHAT IS BCJSSE?
+    // =========================================================================
+    const scenarioBcjsse = [
+      {
+        step: 0, stage: "ARCH_STACK", from: "app", to: "jsse",
+        msg: "1. App Calls Standard javax.net.ssl APIs (SSLContext / Factory)", type: "tcp",
+        callout: { icon: "☕", title: "Application Uses Standard Java SSL APIs" },
+        cards: [
+          {
+            title: "The Standard Java Abstraction (SPI)",
+            body: "Your application NEVER hardcodes Bouncy Castle socket classes. You use standard Java APIs: SSLContext.getInstance('TLS', 'BCJSSE'). Java searches registered security providers for 'BCJSSE'.",
+            example: "SSLContext ctx = SSLContext.getInstance(\"TLS\", \"BCJSSE\");\nctx.init(null, new TrustManager[]{ capturingTrustManager }, null);\nSSLSocket socket = (SSLSocket) ctx.getSocketFactory().createSocket(\"example.com\", 443);",
+            tag: "Standard JCA / JSSE"
+          }
+        ],
+        wire: { type: "JVM API Call", bytes: "SSLContext.getInstance(\"TLS\", \"BCJSSE\")", desc: "Standard Java API lookup" },
+        chain: [], authType: { val: "N/A", kex: "SPI", ku: "N/A" },
+        anchor: { state: "SPI LOOKUP", name: "Querying Security.getProviders()", isCand: "N/A" }
+      },
+      {
+        step: 1, stage: "ARCH_STACK", from: "jsse", to: "bcjsse",
+        msg: "2. javax.net.ssl Delegates to BCJSSE (ProvSSLContextSpi)", type: "tls",
+        callout: { icon: "🧩", title: "BCJSSE: The TLS Protocol Engine & Wire Framer" },
+        cards: [
+          {
+            title: "What BCJSSE Actually Is",
+            body: "BCJSSE (bctls-fips-1.0.18.jar) is Bouncy Castle's clean-room implementation of the TLS 1.3 and 1.2 protocols. It implements the socket framing, record splitting, and state machine.",
+            example: "Provider Class: org.bouncycastle.jsse.provider.BouncyCastleJsseProvider\nKey Classes: ProvSSLContextSpi, ProvTlsClient, ProvSSLSocketDirect\nReplaces: Oracle/Sun's sun.security.ssl.SSLSocketImpl",
+            tag: "BCJSSE Provider"
+          },
+          {
+            title: "What BCJSSE Does on the Wire",
+            body: "BCJSSE parses incoming bytes off the TCP stream: recognizes byte 0x16 (Handshake), byte 0x17 (App Data), parses ClientHello extensions (SNI, ALPN), and splits records into 16KB blocks.",
+            example: "Wire byte: [0x16, 0x03, 0x03, 0x00, 0xC4, ...]\nBCJSSE: 'Record Type 22 (Handshake), Version TLS 1.2, Length 196 bytes'",
+            tag: "Wire Framer"
+          }
+        ],
+        wire: { type: "Provider Delegation", bytes: "ProvSSLContextSpi creates ProvTlsClient protocol state machine", desc: "BCJSSE takes control of TLS records" },
+        chain: [], authType: { val: "N/A", kex: "BCJSSE Core", ku: "N/A" },
+        anchor: { state: "PROVIDER ACTIVE", name: "BCJSSE v1.0.18", isCand: "N/A" }
+      },
+      {
+        step: 2, stage: "ARCH_STACK", from: "bcjsse", to: "bcfips",
+        msg: "3. What 'Delegates' Means: BCJSSE Calls BCFIPS for All Math", type: "cert",
+        callout: { icon: "🔐", title: "BCJSSE Contains ZERO Crypto Math — It Delegates!" },
+        cards: [
+          {
+            title: "What 'Delegates' Means in Real Java Code",
+            body: "BCJSSE does NOT write AES encryption code, RSA exponentiation math, or SHA-256 hashing. Whenever it needs crypto, it literally calls Cipher.getInstance('...', 'BCFIPS') or Signature.getInstance('...', 'BCFIPS')!",
+            example: "// INSIDE BCJSSE (ProvTlsClient.java) Source Code:\n\n// 1. Decrypting TLS 1.3 records (Delegates to BCFIPS):\nCipher cipher = Cipher.getInstance(\"AES/GCM/NoPadding\", \"BCFIPS\");\ncipher.init(Cipher.DECRYPT_MODE, secretKey, gcmParams);\nbyte[] plaintext = cipher.doFinal(ciphertext); // <-- BCFIPS does the math!\n\n// 2. Verifying RSA Digital Signatures (Delegates to BCFIPS):\nSignature sig = Signature.getInstance(\"SHA256withRSA\", \"BCFIPS\");\nsig.initVerify(serverPublicKeyFromCert);\nsig.update(handshakeTranscript);\nboolean valid = sig.verify(signatureBytes); // <-- BCFIPS does the math!",
+            tag: "Literal Java Code"
+          },
+          {
+            title: "Why Two Separate JARs? (The NIST FIPS 140 Mandate)",
+            body: "NIST FIPS 140-2 certification freezes the binary code of bc-fips.jar. Modifying even a single character voids the federal compliance certificate! But TLS protocols change, have bug fixes, and add new extensions. By keeping BCJSSE separate, TLS updates can occur without voiding FIPS certification.",
+            example: "1. bc-fips-1.0.2.5.jar: CMVP Cert #3514 (FROZEN by NIST)\n2. bctls-fips-1.0.18.jar: TLS Protocol Parser (Can be updated)",
+            tag: "FIPS Mandate"
+          }
+        ],
+        wire: { type: "FIPS 140 Crypto Call", bytes: "Cipher.getInstance(\"AES/GCM/NoPadding\", \"BCFIPS\") -> BCFIPS does math", desc: "Certified cryptographic primitives" },
+        chain: [], authType: { val: "N/A", kex: "FIPS Approved Math", ku: "N/A" },
+        anchor: { state: "FIPS APPROVED", name: "BCFIPS 140-2 Level 1", isCand: "N/A" }
+      },
+      {
+        step: 3, stage: "ARCH_STACK", from: "bcfips", to: "bcjsse",
+        msg: "4. BCFIPS Returns Certified Math Results to BCJSSE", type: "tls",
+        callout: { icon: "⚡", title: "BCFIPS Executes Certified Primitives in Approved Mode" },
+        cards: [
+          {
+            title: "The NIST Certified Engine",
+            body: "BCFIPS verifies power-up self-tests and cryptographic boundary enforcement. It returns the raw decrypted bytes or signature verification boolean back to BCJSSE.",
+            example: "CryptoServicesRegistrar.isInApprovedOnlyMode() == true\nAlgorithm: AES-GCM (NIST CAVP #5421)\nOutput: Decrypted plaintext handshake payload",
+            tag: "Approved Mode"
+          }
+        ],
+        wire: { type: "Internal Return", bytes: "Decrypted Certificate Message bytes returned to ProvTlsClient", desc: "Plaintext ASN.1 DER" },
+        chain: [], authType: { val: "N/A", kex: "FIPS Math Done", ku: "N/A" },
+        anchor: { state: "MATH COMPLETE", name: "BCFIPS Engine", isCand: "N/A" }
+      },
+      {
+        step: 4, stage: "ARCH_STACK", from: "bcjsse", to: "app",
+        msg: "5. BCJSSE Invokes CapturingTrustManager.checkServerTrusted()", type: "success",
+        callout: { icon: "🎯", title: "How CapturingTrustManager Intercepts Validation" },
+        cards: [
+          {
+            title: "The Seamless Extension Point",
+            body: "BCJSSE parses the X509 certificates and invokes the TrustManager configured on the SSLContext. Our CapturingTrustManager receives the chain, captures the certs, and validates trust!",
+            example: "ProvX509TrustManager.checkServerTrusted(chain, authType, socket)\n--> CapturingTrustManager intercepts:\n    1. Saves chain to ThreadLocal state\n    2. Validates against in-memory BCFKS store\n    3. Diagnoses untrusted proxy root CAs",
+            tag: "Bridge Complete"
+          }
+        ],
+        wire: { type: "Trust Evaluation", bytes: "CapturingTrustManager.checkServerTrusted(chain, authType, socket)", desc: "Trust manager bridge active" },
+        chain: [], authType: { val: "N/A", kex: "CapturingTM Active", ku: "N/A" },
+        anchor: { state: "READY FOR CONNECTION", name: "BCJSSE + CapturingTM Stack", isCand: "N/A" }
+      }
+    ];
+
+    // =========================================================================
+    // 6. SCENARIO DATA: CAPTURING TRUST MANAGER JAVA PROGRAM FLOW
+    // =========================================================================
+    const scenarioCapturingProg = [
+      {
+        step: 0, stage: "APP_LIFECYCLE", from: "app", to: "store",
+        msg: "1. Spring Boot Inits BCFIPS & Loads Master Keystore", type: "tcp",
+        callout: { icon: "📦", title: "App Startup: Master Trust Store Loaded" },
+        cards: [
+          {
+            title: "Step 1: Security Provider & Keystore Setup",
+            body: "At startup, BcfipsSecurityConfig registers BCFIPS at priority 1 and BCJSSE at priority 2. PersistentTrustStoreService loads ./data/application-truststore.bcfks using password 'changeit-bcfips-secure-store-2026'.",
+            example: "Security.insertProviderAt(new BouncyCastleFipsProvider(), 1);\nSecurity.insertProviderAt(new BouncyCastleJsseProvider(), 2);\nKeyStore master = KeyStore.getInstance(\"BCFKS\", \"BCFIPS\");\nmaster.load(new FileInputStream(path), password.toCharArray());",
+            tag: "Bootstrap"
+          }
+        ],
+        wire: { type: "Disk Keystore Read", bytes: "Loaded 144 trust anchors from ./data/application-truststore.bcfks", desc: "Master store armed" },
+        chain: [], authType: { val: "N/A", kex: "Bootstrap", ku: "N/A" },
+        anchor: { state: "ARMED", name: "144 Master Anchors", isCand: "false" }
+      },
+      {
+        step: 1, stage: "APP_LIFECYCLE", from: "app", to: "store",
+        msg: "2. Ephemeral Keystore Cloned in Memory for Probe Session", type: "tls",
+        callout: { icon: "🧪", title: "Ephemeral Isolation (Zero Disk Contamination)" },
+        cards: [
+          {
+            title: "Step 2: Candidate CA Injected in RAM Only",
+            body: "When user clicks 'Test Connection', InMemoryTrustStoreManager creates a temporary in-memory BCFKS keystore, copies the 144 roots, and attaches candidate PEM under alias 'trial-candidate-ca-8443'.",
+            example: "KeyStore ephemeral = KeyStore.getInstance(\"BCFKS\", \"BCFIPS\");\nephemeral.load(null, null);\ncopyAnchors(masterStore, ephemeral);\nephemeral.setCertificateEntry(\"trial-candidate-ca-8443\", candidateCert);",
+            tag: "Ephemeral Copy"
+          }
+        ],
+        wire: { type: "Memory Injection", bytes: "trial-candidate-ca-8443 added to RAM keystore", desc: "Disk untouched" },
+        chain: [], authType: { val: "N/A", kex: "RAM Store", ku: "N/A" },
+        anchor: { state: "CLONED IN RAM", name: "144 Master + 1 Candidate", isCand: "true" }
+      },
+      {
+        step: 2, stage: "APP_LIFECYCLE", from: "app", to: "tm",
+        msg: "3. CapturingTrustManager Wraps Ephemeral TrustStore", type: "cert",
+        callout: { icon: "🛡️", title: "CapturingTrustManager Initialized" },
+        cards: [
+          {
+            title: "Step 3: Custom Interceptor Initialized",
+            body: "TrustManagerFactory.getInstance('PKIX', 'BCJSSE') initializes standard PKIX logic against the ephemeral store. CapturingTrustManager wraps it, capturing chains and tracking stage.",
+            example: "TrustManagerFactory tmf = TrustManagerFactory.getInstance(\"PKIX\", \"BCJSSE\");\ntmf.init(ephemeralStore);\nX509ExtendedTrustManager delegate = (X509ExtendedTrustManager) tmf.getTrustManagers()[0];\nCapturingTrustManager ctm = new CapturingTrustManager(delegate, ephemeralStore, defaultStage);",
+            tag: "Wrapper Init"
+          }
+        ],
+        wire: { type: "SSLContext Setup", bytes: "SSLContext.init(null, new TrustManager[]{ ctm }, null)", desc: "CapturingTM configured on SSLContext" },
+        chain: [], authType: { val: "N/A", kex: "Interceptor", ku: "N/A" },
+        anchor: { state: "CTM READY", name: "Active Keystore Bound", isCand: "true" }
+      },
+      {
+        step: 3, stage: "APP_LIFECYCLE", from: "tm", to: "ctx",
+        msg: "4. checkServerTrusted() Intercepts & Stores Chain", type: "success",
+        callout: { icon: "📥", title: "Handshake: Pre-Validation Interception" },
+        cards: [
+          {
+            title: "Step 4: Real-Time Capture",
+            body: "When connection executes, checkServerTrusted() runs. CapturingTrustManager saves the presented certificates into thread-local HandshakeCaptureContext and evaluates whether the root is present.",
+            example: "public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) {\n    state.setProxyChain(chain); // Captured into ThreadContext!\n    delegate.checkServerTrusted(chain, authType, socket);\n    resolveAndRecordTrustAnchor(chain, state);\n}",
+            tag: "Capture Phase"
+          }
+        ],
+        wire: { type: "Context Saved", bytes: "state.setProxyChain(chain); // Inspected by UI", desc: "Available for user inspection" },
+        chain: [{ role: "Leaf", subject: "CN=127.0.0.1", isCa: true, selfSigned: true }],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" },
+        anchor: { state: "CAPTURED", name: "Resolving Anchor...", isCand: "Evaluating" }
+      },
+      {
+        step: 4, stage: "APP_LIFECYCLE", from: "app", to: "store",
+        msg: "5. Explicit User Approval Unlocks Commit to Disk", type: "tunnel",
+        callout: { icon: "💾", title: "Controlled Persistent Commit to BCFKS Keystore" },
+        cards: [
+          {
+            title: "Step 5: Gated Commit",
+            body: "Disk modification is NEVER automatic! Only when probe succeeds AND user explicitly clicks 'Save & Trust Proxy Certificate' does PersistentTrustStoreService commit candidate to application-truststore.bcfks.",
+            example: "if (probeSuccess && userConfirmed) {\n    persistentTrustStoreService.addTrustedCertificate(alias, candidateCert);\n    // Atomic write to disk with SHA-384 MAC integrity check\n}",
+            tag: "Atomic Commit"
+          }
+        ],
+        wire: { type: "Disk Write", bytes: "Committed trial-candidate-ca-8443 to ./data/application-truststore.bcfks", desc: "Store updated permanently" },
+        chain: [], authType: { val: "Complete", kex: "BCFKS Flushed", ku: "Verified" },
+        anchor: { state: "COMMITTED TO DISK ✅", name: "145 Anchors (1 New)", isCand: "false (Now Master)" }
+      }
+    ];
+
+    // =========================================================================
+    // 7. SCENARIO DATA: HTTPS FORWARD PROXY (SQUID :8443)
+    // =========================================================================
+    const scenarioHttpsForward = [
+      {
+        step: 0, stage: "PROXY_CONNECT_TLS", from: "client", to: "proxy",
+        msg: "1. TCP 3-Way Handshake with Squid Proxy (:8443)", type: "tcp",
+        callout: { icon: "🔌", title: "Stage 1: TCP Connected to Proxy" },
+        cards: [{ title: "Outer TCP Connection", body: "Client establishes TCP connection to the HTTPS proxy on port 8443.", example: "Socket.connect(new InetSocketAddress('127.0.0.1', 8443));", tag: "Outer TCP" }],
+        wire: { type: "TCP Handshake", bytes: "SYN -> SYN-ACK -> ACK (:8443)", desc: "TCP socket open" },
+        chain: [], authType: { val: "N/A", kex: "TCP", ku: "N/A" }, anchor: { state: "CONNECTING", name: "Squid Proxy", isCand: "N/A" }
+      },
+      {
+        step: 1, stage: "PROXY_CONNECT_TLS", from: "client", to: "proxy",
+        msg: "2. Outer TLS ClientHello (Direct to Proxy :8443)", type: "tls",
+        callout: { icon: "🔒", title: "Stage 1: Outer TLS Handshake with Proxy" },
+        cards: [{ title: "Outer TLS Encryption", body: "Because this is an HTTPS proxy, the client must first establish an encrypted TLS tunnel with Squid itself before issuing HTTP commands!", example: "SSLContext outerCtx = createSslContext(HandshakeStage.PROXY_CONNECT_TLS);\nSSLSocket proxySslSocket = (SSLSocket) outerCtx.getSocketFactory().createSocket(rawSocket, '127.0.0.1', 8443, true);", tag: "Outer TLS" }],
+        wire: { type: "Record 0x16", bytes: "16 03 03 [ClientHello to Squid Proxy :8443]", desc: "Outer TLS handshake" },
+        chain: [], authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" }, anchor: { state: "STAGE 1 TLS", name: "Awaiting Proxy Cert", isCand: "true" }
+      },
+      {
+        step: 2, stage: "PROXY_CONNECT_TLS", from: "proxy", to: "bcjsse",
+        msg: "3. Squid Presents Proxy Self-Signed CA Certificate", type: "cert",
+        callout: { icon: "📜", title: "Proxy Certificate Delivered" },
+        cards: [{ title: "Proxy Certificate Presentation", body: "Squid responds with its certificate (CN=127.0.0.1, O=Secure Proxy Gateway). BCJSSE receives and parses the chain.", example: "Subject: CN=127.0.0.1, O=Secure Proxy Gateway\nIssuer: CN=127.0.0.1, O=Secure Proxy Gateway (Self-Signed CA)\nSerial: 01", tag: "Proxy Chain" }],
+        wire: { type: "Handshake Msg 11", bytes: "Certificate: CN=127.0.0.1, O=Secure Proxy Gateway", desc: "Proxy certificate" },
+        chain: [{ role: "Proxy Server", subject: "CN=127.0.0.1, O=Secure Proxy Gateway", isCa: true, selfSigned: true }],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" }, anchor: { state: "EVALUATING", name: "trial-candidate-ca-8443", isCand: "true" }
+      },
+      {
+        step: 3, stage: "PROXY_CONNECT_TLS", from: "bcjsse", to: "trustmgr",
+        msg: "4. checkServerTrusted() [CapturingTM Intercepts]", type: "cert",
+        callout: { icon: "🛡️", title: "CapturingTM Validates Proxy Cert" },
+        cards: [{ title: "Stage 1 Verification", body: "CapturingTM saves proxy cert into state.setProxyChain(chain). Validates against candidate CA in ephemeral store and sets anchorFromCandidate=true.", example: "state.setProxyChain(chain);\ndelegate.checkServerTrusted(chain, authType, socket);\nresolveAndRecordTrustAnchor(chain, state);", tag: "Anchor Isolated" }],
+        wire: { type: "JVM API", bytes: "state.setProxyChain(chain); state.setAnchorFromCandidate(true);", desc: "Proxy cert validated" },
+        chain: [{ role: "Proxy Server", subject: "CN=127.0.0.1, O=Secure Proxy Gateway", isCa: true, selfSigned: true }],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature verified" }, anchor: { state: "STAGE 1 SUCCESS ✅", name: "trial-candidate-ca-8443", isCand: "true (Required!)" }
+      },
+      {
+        step: 4, stage: "TUNNEL_CONNECT", from: "client", to: "proxy",
+        msg: "5. Encrypted CONNECT httpbin.org:443 Inside Outer TLS", type: "tunnel",
+        callout: { icon: "🚇", title: "HTTP CONNECT Sent Inside Outer TLS" },
+        cards: [{ title: "Encrypted Tunnel Request", body: "Client writes CONNECT httpbin.org:443 inside the outer TLS session. Proxy-Authorization is 100% encrypted.", example: "CONNECT httpbin.org:443 HTTP/1.1\nProxy-Authorization: Basic dGVzdHVzZXI...", tag: "RFC 2817" }],
+        wire: { type: "Encrypted App Data", bytes: "17 03 03 [Encrypted: 'CONNECT httpbin.org:443...']", desc: "Encrypted CONNECT" },
+        chain: [], authType: { val: "Outer AES-GCM", kex: "Tunneling", ku: "Encrypted" }, anchor: { state: "TUNNEL REQUEST", name: "Bridging to target", isCand: "true" }
+      },
+      {
+        step: 5, stage: "TARGET_TLS", from: "client", to: "target",
+        msg: "6. Inner TLS ClientHello (Through Proxy Tunnel)", type: "tls",
+        callout: { icon: "🎯", title: "Stage 2: End-to-End TLS with Target" },
+        cards: [{ title: "Second Nested TLS Handshake", body: "Client layers a second SSLSocket over the tunnel directly to httpbin.org:443. HandshakeStage switches to TARGET_TLS.", example: "state.setCurrentStage(HandshakeStage.TARGET_TLS);\nSSLSocket targetSsl = createLayeredSocket(sslSocket, 'httpbin.org', 443);", tag: "Stage 2 TLS" }],
+        wire: { type: "Nested TLS Record", bytes: "Outer: 17 03 03 [Inner: 16 03 03 (ClientHello)]", desc: "Double encrypted ClientHello" },
+        chain: [], authType: { val: "UNKNOWN", kex: "ECDHE", ku: "digitalSignature" }, anchor: { state: "STAGE 2 INITIATED", name: "Validating Target Cert", isCand: "true" }
+      },
+      {
+        step: 6, stage: "TARGET_TLS", from: "target", to: "trustmgr",
+        msg: "7. Target Certs Validated & Anchor Preserved ✅", type: "cert",
+        callout: { icon: "📜", title: "Target Validated & Candidate Preserved" },
+        cards: [{ title: "Multi-Stage Anchor Isolation", body: "CapturingTM validates httpbin.org against Amazon Root CA 1. Crucially: Stage 2 resolving a public root does NOT clear anchorFromCandidate=true from Stage 1!", example: "state.setTargetChain(chain);\ndelegate.checkServerTrusted(chain, authType, socket);\n// Candidate anchor flag remains TRUE!", tag: "Preserved" }],
+        wire: { type: "Inner Handshake Msg 11", bytes: "Leaf: CN=httpbin.org -> Root: Amazon Root CA 1", desc: "Target public chain" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Root CA", subject: "CN=Amazon Root CA 1", isCa: true, selfSigned: true }
+        ],
+        authType: { val: "UNKNOWN", kex: "ECDHE", ku: "digitalSignature verified" }, anchor: { state: "BOTH STAGES SUCCEEDED ✅", name: "Proxy CA + Amazon Root CA 1", isCand: "true (Commit Unlocked!)" }
+      }
+    ];
+
+    // =========================================================================
+    // 8. SCENARIO DATA: MITM PROXY (:8888)
+    // =========================================================================
+    // =========================================================================
+    // 8. SCENARIO DATA: MITM PROXY (:8888 - DYNAMIC FORGERY & CLEAR-TEXT INSPECTION)
+    // =========================================================================
+    const scenarioMitm = [
+      {
+        step: 0, stage: "PLAIN_CONNECT", from: "client", to: "proxy",
+        msg: "1. TCP Connect & HTTP CONNECT httpbin.org:443 (Port :8888)", type: "tcp",
+        callout: { icon: "🔌", title: "Client Connects to MITM Proxy & Requests Target Tunnel" },
+        cards: [
+          {
+            title: "Connecting to the Inspection Proxy",
+            body: "The client HTTP library connects to mitmproxy listening on port 8888 and issues an HTTP CONNECT command requesting a tunnel to httpbin.org:443.",
+            example: "CONNECT httpbin.org:443 HTTP/1.1\nHost: httpbin.org:443\nUser-Agent: Apache-HttpClient/5.4",
+            tag: "RFC 2817 CONNECT"
+          }
+        ],
+        wire: { type: "Plaintext HTTP", bytes: "CONNECT httpbin.org:443 HTTP/1.1", desc: "Cleartext CONNECT command" },
+        chain: [], authType: { val: "N/A", kex: "TCP Layer", ku: "N/A" },
+        anchor: { state: "TUNNEL REQUEST", name: "mitmproxy :8888", isCand: "false" }
+      },
+      {
+        step: 1, stage: "PLAIN_CONNECT", from: "proxy", to: "client",
+        msg: "2. HTTP/1.1 200 Connection Established (MITM Intercepts)", type: "tcp",
+        callout: { icon: "🕵️", title: "MITM Proxy Acknowledges Tunnel but Prepares to Intercept" },
+        cards: [
+          {
+            title: "Interception vs. Transparent Pass-Through",
+            body: "A standard forward proxy (like Squid) bridges the raw TCP stream blindly. mitmproxy responds 200 OK, but breaks the connection into two separate TLS sessions: Downstream (Client <-> Proxy) and Upstream (Proxy <-> Real Server)!",
+            example: "HTTP/1.1 200 Connection Established\nProxy-Agent: mitmproxy 10.1.5\n\n// Downstream TCP socket ready for TLS Handshake!",
+            tag: "MITM Intercept"
+          }
+        ],
+        wire: { type: "Plaintext HTTP", bytes: "HTTP/1.1 200 Connection Established", desc: "Tunnel acknowledged" },
+        chain: [], authType: { val: "N/A", kex: "TCP Connected", ku: "N/A" },
+        anchor: { state: "INTERCEPT READY", name: "mitmproxy :8888", isCand: "false" }
+      },
+      {
+        step: 2, stage: "DOWNSTREAM_TLS", from: "client", to: "proxy",
+        msg: "3. Downstream ClientHello (SNI: httpbin.org, KeyShare X25519)", type: "tls",
+        callout: { icon: "⚡", title: "Client Starts TLS Believing It Talks Directly to Target" },
+        cards: [
+          {
+            title: "Client Negotiates with Target SNI",
+            body: "The client begins the TLS handshake, sending its ephemeral key share and Server Name Indication (SNI = httpbin.org). mitmproxy intercepts this ClientHello packet.",
+            example: "ClientHello (Downstream):\n- SNI: httpbin.org\n- SupportedSuites: [TLS_AES_256_GCM_SHA384, ...]\n- KeyShare: curve=X25519, pubkey=3a7b...",
+            tag: "Downstream TLS"
+          }
+        ],
+        wire: { type: "Record 0x16 (Handshake)", bytes: "16 03 03 00 D4 [ClientHello: SNI=httpbin.org]", desc: "Downstream ClientHello" },
+        chain: [], authType: { val: "UNKNOWN", kex: "ECDHE", ku: "N/A" },
+        anchor: { state: "DOWNSTREAM ACTIVE", name: "mitmproxy", isCand: "false" }
+      },
+      {
+        step: 3, stage: "UPSTREAM_TLS", from: "proxy", to: "target",
+        msg: "4. Upstream TLS ClientHello (mitmproxy -> Real Server :443)", type: "tls",
+        callout: { icon: "🌐", title: "MITM Proxy Initiates Separate TLS Handshake with Real Server" },
+        cards: [
+          {
+            title: "Establishing the Upstream Connection",
+            body: "Before replying to the downstream client, mitmproxy establishes its own independent TLS connection to the real server (httpbin.org:443) to retrieve genuine certificates and negotiate cipher parameters.",
+            example: "Upstream Handshake (mitmproxy -> Real Server):\n1. TCP Connect to 54.161.222.85:443\n2. ClientHello (SNI: httpbin.org)\n--> Waiting for genuine server certificate chain!",
+            tag: "Upstream TLS"
+          }
+        ],
+        wire: { type: "Record 0x16 (Handshake)", bytes: "16 03 03 [Upstream ClientHello to httpbin.org:443]", desc: "Upstream TLS handshake" },
+        chain: [], authType: { val: "UNKNOWN", kex: "ECDHE", ku: "N/A" },
+        anchor: { state: "UPSTREAM ACTIVE", name: "httpbin.org:443", isCand: "false" }
+      },
+      {
+        step: 4, stage: "UPSTREAM_TLS", from: "target", to: "proxy",
+        msg: "5. Real Server Returns Genuine Cert (Amazon Root CA 1)", type: "cert",
+        callout: { icon: "📜", title: "Real Server Authenticates Upstream Connection to Proxy" },
+        cards: [
+          {
+            title: "Inspecting Real Server Identity",
+            body: "The real server returns its genuine certificate chain. mitmproxy validates it upstream and extracts the Subject Name, Subject Alternative Names (SAN), and valid date ranges.",
+            example: "Real Server Certificate Chain:\n- Leaf: CN=httpbin.org, SAN: [httpbin.org, *.httpbin.org]\n- Intermediate: CN=Amazon RSA 2048 M02\n- Root: Amazon Root CA 1 (Valid Public Root)\n--> Upstream TLS session established!",
+            tag: "Real Certificate"
+          }
+        ],
+        wire: { type: "Upstream Cert Msg", bytes: "Certificate: CN=httpbin.org (Issuer: Amazon RSA 2048 M02)", desc: "Real certificate delivered" },
+        chain: [
+          { role: "Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "Intermediate CA", subject: "CN=Amazon RSA 2048 M02", isCa: true, selfSigned: false }
+        ],
+        authType: { val: "UNKNOWN", kex: "ECDHE", ku: "digitalSignature" },
+        anchor: { state: "UPSTREAM VERIFIED", name: "Amazon Root CA 1", isCand: "false" }
+      },
+      {
+        step: 5, stage: "DYNAMIC_FORGERY", from: "proxy", to: "proxy",
+        msg: "6. MITM Dynamically Generates Forged Cert (Signed by mitmproxy CA)", type: "cert",
+        callout: { icon: "⚠️", title: "The Core MITM Trick: On-the-Fly Dynamic Certificate Forgery" },
+        cards: [
+          {
+            title: "Why Dynamic Forgery is Required",
+            body: "mitmproxy cannot impersonate httpbin.org using the real certificate because it does NOT possess httpbin.org's private key. So mitmproxy dynamically mints a new certificate for httpbin.org with matching SAN, but signs it with its OWN private CA ('mitmproxy CA')!",
+            example: "Dynamic Certificate Minting in RAM:\n- Subject: CN=httpbin.org, SAN: [DNS:httpbin.org]\n- Issuer: CN=mitmproxy\n- Private Key: Generated on the fly by mitmproxy\n- Signature: Signed by mitmproxy CA (Internal Root)",
+            tag: "Dynamic Forgery"
+          }
+        ],
+        wire: { type: "Internal CA Mint", bytes: "X509_sign(forged_cert, mitmproxy_ca_key, SHA256)", desc: "Counterfeit cert minted" },
+        chain: [
+          { role: "Forged Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "MITM Root CA", subject: "CN=mitmproxy", isCa: true, selfSigned: true }
+        ],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" },
+        anchor: { state: "FORGED IN RAM", name: "mitmproxy CA", isCand: "Unknown" }
+      },
+      {
+        step: 6, stage: "DOWNSTREAM_TLS", from: "proxy", to: "trustmgr",
+        msg: "7. Downstream ServerHello + Forged Chain (CN=httpbin.org -> CN=mitmproxy)", type: "cert",
+        callout: { icon: "📜", title: "MITM Presents Forged Certificate to Java JSSE Engine" },
+        cards: [
+          {
+            title: "The Forged Wire Certificate Chain",
+            body: "mitmproxy completes the downstream handshake with the client by sending ServerHello and the forged certificate chain. Java's JSSE passes this chain to the configured TrustManager.",
+            example: "Presented Chain to Java:\nchain[0]: CN=httpbin.org (Issuer: CN=mitmproxy)\nchain[1]: CN=mitmproxy (Root CA, Self-Signed, Untrusted!)",
+            tag: "Forged Wire Chain"
+          }
+        ],
+        wire: { type: "Handshake Msg 11", bytes: "Leaf: CN=httpbin.org (Issuer: CN=mitmproxy) -> Root: CN=mitmproxy", desc: "Counterfeit chain delivered" },
+        chain: [
+          { role: "Forged Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "MITM Root CA", subject: "CN=mitmproxy", isCa: true, selfSigned: true }
+        ],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature" },
+        anchor: { state: "EVALUATING", name: "mitmproxy CA", isCand: "false" }
+      },
+      {
+        step: 7, stage: "TRUST_DIAGNOSIS", from: "trustmgr", to: "client",
+        msg: "8. checkServerTrusted() FAILS ❌ -> Diagnosed: FAILED_UNTRUSTED_PROXY", type: "cert",
+        callout: { icon: "❌", title: "Java Rejects Forged Certificate: Untrusted Proxy CA!" },
+        cards: [
+          {
+            title: "Why Standard Java Apps Crash",
+            body: "Java's truststore has 144 public roots, but does NOT contain 'mitmproxy CA'. PKIX path building throws ValidatorException. CapturingTrustManager catches this, inspects chain[1], and diagnoses FAILED_UNTRUSTED_PROXY with missing trust anchor 'CN=mitmproxy'.",
+            example: "catch (CertificateException ce) {\n    state.setDiagnosedFailure(HandshakeFailureReason.FAILED_UNTRUSTED_PROXY);\n    state.setMissingTrustAnchor(\"CN=mitmproxy\");\n    state.setTargetChain(chain);\n    throw ce; // Prevents insecure communication!\n}",
+            tag: "Diagnosis"
+          }
+        ],
+        wire: { type: "PKIX Validation Error", bytes: "PKIX path building failed: unable to find valid certification path", desc: "Untrusted root rejected" },
+        chain: [
+          { role: "Forged Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "MITM Root CA", subject: "CN=mitmproxy", isCa: true, selfSigned: true }
+        ],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "Rejected" },
+        anchor: { state: "FAILED_UNTRUSTED_PROXY ❌", name: "missingTrustAnchor: CN=mitmproxy", isCand: "false" }
+      },
+      {
+        step: 8, stage: "EPHEMERAL_VERIFY", from: "client", to: "trustmgr",
+        msg: "9. User Injects mitmproxy-ca.pem -> Ephemeral Verification SUCCEEDS ✅", type: "cert",
+        callout: { icon: "🧪", title: "Isolated In-Memory Ephemeral Keystore Validates Candidate" },
+        cards: [
+          {
+            title: "Safe Ephemeral Verification (Zero Disk Modification)",
+            body: "The user provides mitmproxy-ca.pem. CapturingTM clones the truststore in RAM, injects 'trial-candidate-ca-8888', and re-runs the probe. Re-verification succeeds! Sets anchorFromCandidate=true and unlocks the Commit button.",
+            example: "ephemeralTrustStore.setCertificateEntry(\"trial-candidate-ca-8888\", candidateCert);\n// Probe re-runs checkServerTrusted() -> SUCCEEDS!\nstate.setAnchorFromCandidate(true); // Unlocks Commit to application-truststore.bcfks!",
+            tag: "Ephemeral Trust"
+          }
+        ],
+        wire: { type: "PKIX Success", bytes: "Validated against trial-candidate-ca-8888 (anchorFromCandidate=true)", desc: "In-memory validation" },
+        chain: [
+          { role: "Forged Leaf", subject: "CN=httpbin.org", isCa: false, selfSigned: false },
+          { role: "MITM Root CA", subject: "CN=mitmproxy", isCa: true, selfSigned: true }
+        ],
+        authType: { val: "ECDHE_RSA", kex: "ECDHE", ku: "digitalSignature verified" },
+        anchor: { state: "VERIFIED IN RAM ✅", name: "trial-candidate-ca-8888", isCand: "true (Commit Unlocked)" }
+      },
+      {
+        step: 9, stage: "DATA_INSPECTION", from: "client", to: "proxy",
+        msg: "10. Client Sends Encrypted GET /get -> MITM Decrypts to Plaintext! 🔓", type: "tunnel",
+        callout: { icon: "🔓", title: "MITM Proxy Decrypts Downstream Traffic in Plaintext!" },
+        cards: [
+          {
+            title: "The MITM Reality: Plaintext Inspection & Modification",
+            body: "Because mitmproxy owns the downstream TLS session keys, it decrypts the HTTP request into plaintext! All headers, cookies, passwords, and tokens are visible in the mitmproxy Web UI on port 8889.",
+            example: "mitmproxy Memory / Web UI (:8889):\nGET /get HTTP/1.1\nHost: httpbin.org\nAuthorization: Bearer my-secret-token\nAccept: application/json\n--> Operator can view or tamper with payload!",
+            tag: "Plaintext Inspection"
+          }
+        ],
+        wire: { type: "Encrypted Record 23 -> Plaintext", bytes: "Downstream Ciphertext -> mitmproxy: 'GET /get HTTP/1.1\\r\\nHost: httpbin.org...'", desc: "Decrypted in RAM" },
+        chain: [], authType: { val: "Downstream Key", kex: "AES-GCM", ku: "Decrypted by MITM" },
+        anchor: { state: "INSPECTED 🔓", name: "Cleartext on Port 8889", isCand: "true" }
+      },
+      {
+        step: 10, stage: "DATA_INSPECTION", from: "proxy", to: "target",
+        msg: "11. MITM Re-Encrypts Request with Upstream Keys -> Real Server :443", type: "tunnel",
+        callout: { icon: "🔒", title: "Request Re-Encrypted and Forwarded to Real Server" },
+        cards: [
+          {
+            title: "Upstream Delivery & Two-Sided Encryption",
+            body: "mitmproxy re-encrypts the request with upstream session keys and sends it to the real server. When the server returns 200 OK, mitmproxy decrypts it, inspects it, re-encrypts it with downstream keys, and delivers it to the client.",
+            example: "Complete Round-Trip:\n1. Client -> [Downstream TLS] -> mitmproxy\n2. mitmproxy [Plaintext Inspection on Web UI :8889]\n3. mitmproxy -> [Upstream TLS] -> Real Server\n4. Real Server 200 OK -> mitmproxy -> Client\n--> Full MITM HTTPS cycle complete!",
+            tag: "Full MITM Cycle"
+          }
+        ],
+        wire: { type: "Upstream Ciphertext", bytes: "mitmproxy: 17 03 03 [Re-encrypted GET /get] -> Real Server: 200 OK", desc: "Upstream delivered" },
+        chain: [], authType: { val: "Upstream Key", kex: "AES-GCM", ku: "Re-encrypted" },
+        anchor: { state: "COMPLETE ✅", name: "Two-Sided TLS Verified", isCand: "true" }
+      }
+    ];
+
+    // =========================================================================
+    // 9. ACTIVE STATE MANAGEMENT
+    // =========================================================================
+    let currentScreen = 'direct-tls';
+    let currentTlsVersion = 'tls13';
+    let activeActors = actorsDirect;
+    let activeSteps = scenarioTls13;
+    let currentStepIndex = 0;
+    let playInterval = null;
+    let stepSpeed = 2600;
+
+    function switchScreen(screenKey) {
+      currentScreen = screenKey;
+      stopPlay();
+
+      ['direct-tls', 'java-tls-impl', 'bcjsse-deep', 'capturing-deep', 'https-forward', 'mitm'].forEach(k => {
+        const btn = document.getElementById('tab-' + k);
+        if (btn) {
+          if (k === screenKey) {
+            btn.className = "nav-tab active px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent";
+          } else {
+            btn.className = "nav-tab px-4 py-2 rounded-xl text-sm font-bold transition flex items-center gap-1.5 border border-transparent text-slate-400 hover:text-slate-200";
+          }
+        }
+      });
+
+      const subToggle = document.getElementById('tls-version-subtoggle');
+      if (screenKey === 'direct-tls') {
+        subToggle.classList.remove('hidden');
+        activeActors = actorsDirect;
+        activeSteps = (currentTlsVersion === 'tls13') ? scenarioTls13 : scenarioTls12;
+        document.getElementById('diagram-title').innerText = (currentTlsVersion === 'tls13') 
+          ? "Direct TLS 1.3 Handshake (RFC 8446 - Pure Wire Protocol)" 
+          : "Direct TLS 1.2 Handshake (RFC 5246 - Pure Wire Protocol)";
+      } else {
+        subToggle.classList.add('hidden');
+        if (screenKey === 'java-tls-impl') {
+          activeActors = actorsJavaTls;
+          activeSteps = scenarioJavaTlsImpl;
+          document.getElementById('diagram-title').innerText = "How Java Implements the Handshake & Client APIs";
+        } else if (screenKey === 'bcjsse-deep') {
+          activeActors = actorsBcjsse;
+          activeSteps = scenarioBcjsse;
+          document.getElementById('diagram-title').innerText = "Understanding the BCJSSE Provider Architecture";
+        } else if (screenKey === 'capturing-deep') {
+          activeActors = actorsCapturingProg;
+          activeSteps = scenarioCapturingProg;
+          document.getElementById('diagram-title').innerText = "CapturingTrustManager Complete Java Program Lifecycle";
+        } else if (screenKey === 'https-forward') {
+          activeActors = actorsHttpsForward;
+          activeSteps = scenarioHttpsForward;
+          document.getElementById('diagram-title').innerText = "HTTPS Forward Proxy (Squid :8443 - Two Nested TLS Handshakes)";
+        } else {
+          activeActors = actorsMitm;
+          activeSteps = scenarioMitm;
+          document.getElementById('diagram-title').innerText = "MITM Inspection Proxy (:8888 - Dynamic Cert Forgery & Trust)";
+        }
+      }
+
+      renderConceptBox(screenKey);
+      currentStepIndex = 0;
+      renderCurrentStep();
+    }
+
+    function switchTlsVersion(verKey) {
+      currentTlsVersion = verKey;
+      stopPlay();
+      if (verKey === 'tls13') {
+        document.getElementById('btn-tls13').className = "sub-tab active px-3 py-1 rounded-lg text-xs font-bold transition border border-transparent";
+        document.getElementById('btn-tls12').className = "sub-tab px-3 py-1 rounded-lg text-xs font-bold transition border border-transparent text-slate-400 hover:text-slate-200";
+        activeSteps = scenarioTls13;
+        document.getElementById('diagram-title').innerText = "Direct TLS 1.3 Handshake (RFC 8446 - Pure Wire Protocol)";
+      } else {
+        document.getElementById('btn-tls12').className = "sub-tab active px-3 py-1 rounded-lg text-xs font-bold transition border border-transparent";
+        document.getElementById('btn-tls13').className = "sub-tab px-3 py-1 rounded-lg text-xs font-bold transition border border-transparent text-slate-400 hover:text-slate-200";
+        activeSteps = scenarioTls12;
+        document.getElementById('diagram-title').innerText = "Direct TLS 1.2 Handshake (RFC 5246 - Pure Wire Protocol)";
+      }
+      renderConceptBox('direct-tls');
+      currentStepIndex = 0;
+      renderCurrentStep();
+    }
+
+    // =========================================================================
+    // 10. TOP CONCEPT BOX RENDERER
+    // =========================================================================
+    let activeConceptTab = 'kex-rsa';
+
+    function renderConceptBox(screenKey) {
+      const box = document.getElementById('screen-concept-box');
+      if (screenKey === 'direct-tls') {
+        box.innerHTML = `
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+              <span>💡</span> Handshake Demystified: ECDHE vs. RSA
+            </span>
+            <div class="flex items-center gap-1">
+              <button onclick="switchConceptTab('kex-rsa')" id="ctab-kex-rsa" class="concept-tab active px-2.5 py-1 rounded text-xs font-mono border border-slate-700">ECDHE vs RSA</button>
+              <button onclick="switchConceptTab('static-rsa')" id="ctab-static-rsa" class="concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400">Old Static RSA</button>
+            </div>
+          </div>
+          <div id="concept-content-body" class="text-xs text-slate-300 leading-relaxed pt-1">
+            ${getConceptContent('kex-rsa')}
+          </div>
+        `;
+      } else if (screenKey === 'java-tls-impl') {
+        box.innerHTML = `
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+              <span>☕</span> How Java Implements TLS Handshakes
+            </span>
+            <div class="flex items-center gap-1">
+              <button onclick="switchConceptTab('java-authtype')" id="ctab-java-authtype" class="concept-tab active px-2.5 py-1 rounded text-xs font-mono border border-slate-700">authType in Java</button>
+              <button onclick="switchConceptTab('java-keychecker')" id="ctab-java-keychecker" class="concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400">KeyChecker Rules</button>
+            </div>
+          </div>
+          <div id="concept-content-body" class="text-xs text-slate-300 leading-relaxed pt-1">
+            ${getConceptContent('java-authtype')}
+          </div>
+        `;
+      } else if (screenKey === 'bcjsse-deep') {
+        box.innerHTML = `
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+              <span>🧩</span> What "BCJSSE Delegates to BCFIPS" Actually Means
+            </span>
+            <div class="flex items-center gap-1">
+              <button onclick="switchConceptTab('delegation-code')" id="ctab-delegation-code" class="concept-tab active px-2.5 py-1 rounded text-xs font-mono border border-slate-700">Code in BCJSSE</button>
+              <button onclick="switchConceptTab('fips-rule')" id="ctab-fips-rule" class="concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400">Why Two JARs?</button>
+              <button onclick="switchConceptTab('roles-table')" id="ctab-roles-table" class="concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400">Division of Labor</button>
+            </div>
+          </div>
+          <div id="concept-content-body" class="text-xs text-slate-300 leading-relaxed pt-1">
+            ${getConceptContent('delegation-code')}
+          </div>
+        `;
+      } else if (screenKey === 'mitm') {
+        box.innerHTML = `
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+              <span>🕵️</span> MITM Inspection Proxy Mechanics
+            </span>
+            <div class="flex items-center gap-1">
+              <button onclick="switchConceptTab('mitm-twosided')" id="ctab-mitm-twosided" class="concept-tab active px-2.5 py-1 rounded text-xs font-mono border border-slate-700">Two-Sided TLS</button>
+              <button onclick="switchConceptTab('mitm-forgery')" id="ctab-mitm-forgery" class="concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400">Dynamic Forgery</button>
+              <button onclick="switchConceptTab('mitm-defense')" id="ctab-mitm-defense" class="concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400">CapturingTM Defense</button>
+            </div>
+          </div>
+          <div id="concept-content-body" class="text-xs text-slate-300 leading-relaxed pt-1">
+            ${getConceptContent('mitm-twosided')}
+          </div>
+        `;
+      } else {
+        box.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+              <span>🛡️</span> ${screenKey === 'capturing-deep' ? 'Program Lifecycle Architecture' : 'Two-Stage Nested TLS Model'}
+            </span>
+            <span class="text-xs font-mono text-slate-400">FIPS 140 Keystore Integrity Gated</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed pt-1">
+            ${screenKey === 'capturing-deep' 
+              ? 'Complete flow: JVM registers BCFIPS/BCJSSE, loads 144 anchors from application-truststore.bcfks, clones in RAM on probe, and gates disk commits behind explicit user approval.'
+              : 'Outer TLS authenticates Squid proxy (:8443), encrypted HTTP CONNECT opens tunnel, and Inner TLS negotiates end-to-end encryption with target.'}
+          </p>
+        `;
+      }
+    }
+
+    function switchConceptTab(tabKey) {
+      activeConceptTab = tabKey;
+      ['kex-rsa', 'static-rsa', 'java-authtype', 'java-keychecker', 'delegation-code', 'fips-rule', 'roles-table', 'mitm-twosided', 'mitm-forgery', 'mitm-defense'].forEach(k => {
+        const btn = document.getElementById('ctab-' + k);
+        if (btn) {
+          if (k === tabKey) {
+            btn.className = "concept-tab active px-2.5 py-1 rounded text-xs font-mono border border-slate-700";
+          } else {
+            btn.className = "concept-tab px-2.5 py-1 rounded text-xs font-mono border border-slate-700 text-slate-400";
+          }
+        }
+      });
+      const body = document.getElementById('concept-content-body');
+      if (body) {
+        body.innerHTML = getConceptContent(tabKey);
+      }
+    }
+
+    function getConceptContent(tabKey) {
+      if (tabKey === 'kex-rsa') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-sky-300 text-xs">Modern TLS separates Key Exchange from Authentication:</div>
+            <div class="grid grid-cols-2 gap-2 text-[11px] font-mono mt-1">
+              <div class="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                <span class="text-emerald-400 font-bold block mb-1">1. Key Exchange = ECDHE</span>
+                Both parties generate temporary elliptic curve keys: <code class="text-amber-300">(c_priv, C_pub)</code> &amp; <code class="text-amber-300">(s_priv, S_pub)</code>.<br>
+                Shared Secret = <code class="text-sky-300">c_priv &times; S_pub = s_priv &times; C_pub</code>.<br>
+                <span class="text-slate-400">The secret is NEVER sent across the wire!</span>
+              </div>
+              <div class="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                <span class="text-purple-400 font-bold block mb-1">2. Authentication = RSA</span>
+                Anyone could create an EC keypair! To prove <code class="text-amber-300">S_pub</code> actually belongs to Google, the server signs <code class="text-amber-300">S_pub</code> using its <b>RSA Private Key</b>.<br>
+                Client verifies the signature using the <b>RSA Public Key</b> from the certificate!
+              </div>
+            </div>
+            <div class="text-[11px] text-amber-200 bg-amber-950/30 p-1.5 rounded-lg border border-amber-900/50">
+              &bull; <b>Key Takeaway</b>: The RSA key is <b>NOT</b> encrypting the session! It is ONLY a digital signature preventing Man-in-the-Middle attacks.
+            </div>
+          </div>
+        `;
+      } else if (tabKey === 'static-rsa') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-red-400 text-xs">Old Static RSA Key Exchange (Banned in TLS 1.3):</div>
+            <p class="text-[11px]">
+              In TLS 1.0–1.2 legacy, the client generated a Pre-Master Secret and encrypted it directly using the server's RSA Public Key from the certificate:
+              <br><code class="text-amber-300 font-mono">ClientKeyExchange = RSA_Encrypt(ServerPubKey, PreMasterSecret)</code>
+            </p>
+            <div class="p-2 bg-red-950/30 rounded-lg border border-red-900/50 text-[11px] text-red-200">
+              <b>Fatal Flaw (Zero Forward Secrecy)</b>: If an adversary records encrypted internet traffic today, and 5 years later steals the server's private RSA key, they can decrypt the Pre-Master Secret of every historical session! That is why static RSA was eliminated in TLS 1.3.
+            </div>
+          </div>
+        `;
+      } else if (tabKey === 'java-authtype') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-sky-300 text-xs">How Java's JSSE passes the authType parameter:</div>
+            <ul class="space-y-1 text-[11px]">
+              <li>
+                <span class="text-amber-400 font-bold font-mono">authType = "UNKNOWN"</span> (TLS 1.3): 
+                The cipher suite is <code class="text-sky-300">TLS_AES_256_GCM_SHA384</code>. There is NO key exchange name in the suite because key exchange is ALWAYS Diffie-Hellman! JSSE passes "UNKNOWN", and Java falls back to verifying <code class="text-amber-300">KeyUsage[digitalSignature]</code>.
+              </li>
+              <li>
+                <span class="text-amber-400 font-bold font-mono">authType = "ECDHE_RSA"</span> (TLS 1.2): 
+                The cipher suite is <code class="text-sky-300">TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</code>. JSSE parses both the key exchange (<code class="text-emerald-400">ECDHE</code>) and the cert signature (<code class="text-purple-400">RSA</code>). Java's <code class="text-sky-300">KeyChecker</code> validates that the cert has <code class="text-amber-300">KeyUsage[digitalSignature]</code>.
+              </li>
+            </ul>
+          </div>
+        `;
+      } else if (tabKey === 'java-keychecker') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-sky-300 text-xs">Java KeyChecker Bitmask Rules (RFC 5280):</div>
+            <p class="text-[11px]">Java's internal <code class="text-sky-400">sun.security.ssl.X509TrustManagerImpl</code> and <code class="text-purple-400">ProvX509TrustManager</code> inspect the boolean bitmask in <code class="text-amber-300">cert.getKeyUsage()</code>:</p>
+            <div class="p-2 bg-black/60 rounded-lg text-[11px] font-mono text-emerald-300 space-y-0.5">
+              <div>&bull; If authType is "ECDHE_RSA" or "UNKNOWN": demands bit 0 (digitalSignature == true)</div>
+              <div>&bull; If authType is static "RSA": demands bit 2 (keyEncipherment == true)</div>
+              <div>&bull; If authType is "DHE_DSS": demands bit 0 (digitalSignature == true)</div>
+            </div>
+          </div>
+        `;
+      } else if (tabKey === 'delegation-code') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-purple-300 text-xs">Actual Code inside BCJSSE (bctls-fips.jar):</div>
+            <p class="text-[11px]">BCJSSE contains <b>zero</b> cryptographic math. When it needs to decrypt or sign, it literally delegates to BCFIPS via standard Java interfaces:</p>
+            <div class="p-2 bg-black/80 rounded-lg border border-slate-800 text-[10px] font-mono text-emerald-300 whitespace-pre overflow-x-auto">// Decrypting TLS packets (BCJSSE calls BCFIPS):
+Cipher c = Cipher.getInstance("AES/GCM/NoPadding", "BCFIPS");
+c.init(Cipher.DECRYPT_MODE, sessionKey, gcmParams);
+byte[] plain = c.doFinal(recordBytes); // &lt;-- BCFIPS does the math!
+
+// Verifying RSA signature (BCJSSE calls BCFIPS):
+Signature sig = Signature.getInstance("SHA256withRSA", "BCFIPS");
+sig.initVerify(certPublicKey);
+sig.update(handshakeData);
+boolean ok = sig.verify(signatureBytes); // &lt;-- BCFIPS does the math!</div>
+          </div>
+        `;
+      } else if (tabKey === 'fips-rule') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-amber-300 text-xs">Why Two Separate JARs? (NIST FIPS 140 Mandate):</div>
+            <p class="text-[11px]">
+              &bull; <b>bc-fips-1.0.2.5.jar</b> is certified by NIST under FIPS 140-2 (Certificate #3514). Under federal rules, <b>not a single byte of code may be changed</b>, or the certification is immediately revoked!
+            </p>
+            <p class="text-[11px]">
+              &bull; But TLS networking protocols evolve rapidly (RFC updates, socket optimizations, new extensions).
+            </p>
+            <p class="text-[11px]">
+              &bull; <b>The Architecture</b>: Bouncy Castle isolates the TLS wire parser in <b>bctls-fips.jar (BCJSSE)</b>, which can be patched and updated freely, while delegating 100% of mathematical cryptography to the frozen, certified <b>bc-fips.jar (BCFIPS)</b>!
+            </p>
+          </div>
+        `;
+      } else if (tabKey === 'roles-table') {
+        return `
+          <div class="space-y-1 mt-1 text-[11px] font-mono">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-slate-700 text-slate-400">
+                  <th class="py-1">Layer</th>
+                  <th class="py-1">Jar / Package</th>
+                  <th class="py-1">What It Does</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800 text-slate-300">
+                <tr>
+                  <td class="py-1 text-sky-400 font-bold">javax.net.ssl</td>
+                  <td class="py-1 text-slate-400">java.base</td>
+                  <td class="py-1">Abstract interfaces: SSLContext, SSLSocket, X509TrustManager</td>
+                </tr>
+                <tr>
+                  <td class="py-1 text-purple-400 font-bold">BCJSSE</td>
+                  <td class="py-1 text-slate-400">bctls-fips.jar</td>
+                  <td class="py-1">Wire framer, record parser (0x16), handshake state machine, calls CapturingTM</td>
+                </tr>
+                <tr>
+                  <td class="py-1 text-amber-400 font-bold">BCFIPS</td>
+                  <td class="py-1 text-slate-400">bc-fips.jar</td>
+                  <td class="py-1">NIST-certified pure math: AES-GCM, RSA modular math, SHA, Diffie-Hellman</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+      } else if (tabKey === 'mitm-twosided') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-amber-400 text-xs">Two Completely Independent TLS Sessions:</div>
+            <p class="text-[11px]">An HTTPS MITM Proxy (mitmproxy on port 8888) is NOT a transparent pipe. It actively acts as a <b>TLS Server to the Client</b> AND a <b>TLS Client to the Real Server</b>:</p>
+            <div class="grid grid-cols-2 gap-2 text-[11px] font-mono mt-1">
+              <div class="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                <span class="text-sky-400 font-bold block mb-1">1. Downstream Session</span>
+                <b>Client &harr; mitmproxy</b><br>
+                Encrypted with keys derived from <i>Client KeyShare + mitmproxy KeyShare</i>.<br>
+                Presents <b>counterfeit certificate</b> signed by mitmproxy CA.
+              </div>
+              <div class="p-2 bg-slate-900 rounded-lg border border-slate-800">
+                <span class="text-rose-400 font-bold block mb-1">2. Upstream Session</span>
+                <b>mitmproxy &harr; Real Server</b><br>
+                Encrypted with keys derived from <i>mitmproxy KeyShare + Real Server KeyShare</i>.<br>
+                Authenticates with <b>genuine certificate</b> (Amazon Root CA 1).
+              </div>
+            </div>
+            <div class="text-[11px] text-amber-200 bg-amber-950/30 p-1.5 rounded-lg border border-amber-900/50">
+              &bull; <b>The Interception Point</b>: Between Downstream and Upstream, all traffic exists in <b>cleartext in the proxy's memory</b> (and is displayed in the mitmproxy Web UI on port 8889).
+            </div>
+          </div>
+        `;
+      } else if (tabKey === 'mitm-forgery') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-amber-400 text-xs">Why Dynamic Certificate Forgery is Necessary:</div>
+            <p class="text-[11px]">When the client connects to <code class="text-sky-300">https://httpbin.org</code> via mitmproxy, why can't mitmproxy just forward the real certificate?</p>
+            <div class="p-2 bg-slate-900 rounded-lg border border-slate-800 text-[11px] space-y-1">
+              <div>&bull; <b>The Private Key Barrier</b>: In TLS, the server must create a digital signature (<code class="text-emerald-400">CertificateVerify</code>) proving ownership of the certificate's public key.</div>
+              <div>&bull; mitmproxy <b>does NOT own httpbin.org's private key</b>. If it presented the real certificate, it could never sign the handshake!</div>
+              <div>&bull; <b>The Solution (Dynamic Minting)</b>: mitmproxy generates a fresh temporary RSA/EC keypair, creates a counterfeit certificate copying the SAN (<code class="text-amber-300">DNS:httpbin.org</code>), and signs it using its own internal root CA (<code class="text-purple-400">mitmproxy CA</code>).</div>
+            </div>
+          </div>
+        `;
+      } else if (tabKey === 'mitm-defense') {
+        return `
+          <div class="space-y-1.5">
+            <div class="font-bold text-emerald-400 text-xs">How CapturingTrustManager Handles the Untrusted Proxy:</div>
+            <p class="text-[11px]">Standard Java applications crash with <code class="text-rose-400 font-mono">PKIX path building failed</code> because <code class="text-amber-300">CN=mitmproxy</code> is not in the default truststore.</p>
+            <div class="p-2 bg-slate-900 rounded-lg border border-slate-800 text-[11px] space-y-1">
+              <div><b>1. Diagnosis</b>: CapturingTM intercepts the failed chain, inspects the self-signed root, and diagnoses <code class="text-amber-400 font-mono">FAILED_UNTRUSTED_PROXY</code> with missing anchor <code class="text-sky-300">CN=mitmproxy</code>.</div>
+              <div><b>2. Ephemeral Isolation</b>: When the user supplies <code class="text-emerald-400">mitmproxy-ca.pem</code>, it is loaded into a RAM-only clone (<code class="text-amber-300">trial-candidate-ca-8888</code>). Disk keystore is untouched.</div>
+              <div><b>3. Gated Commit</b>: Once re-probe passes, <code class="text-emerald-400 font-mono">anchorFromCandidate=true</code> unlocks the user Commit button to persist the CA to <code class="text-sky-400">application-truststore.bcfks</code>.</div>
+            </div>
+          </div>
+        `;
+      }
+      return "";
+    }
+
+    function gotoStep(idx) {
+      if (idx < 0) idx = 0;
+      if (idx >= activeSteps.length) idx = activeSteps.length - 1;
+      currentStepIndex = idx;
+      renderCurrentStep();
+    }
+
+    function nextStep() {
+      if (currentStepIndex < activeSteps.length - 1) {
+        gotoStep(currentStepIndex + 1);
+      } else {
+        stopPlay();
+      }
+    }
+
+    function prevStep() {
+      if (currentStepIndex > 0) {
+        gotoStep(currentStepIndex - 1);
+      }
+    }
+
+    function togglePlay() {
+      if (playInterval) {
+        stopPlay();
+      } else {
+        startPlay();
+      }
+    }
+
+    function startPlay() {
+      const elIcon = document.getElementById('play-icon-float');
+      if (elIcon) elIcon.innerText = "⏸";
+      const elText = document.getElementById('play-text-float');
+      if (elText) elText.innerText = "Pause";
+      playInterval = setInterval(() => {
+        if (currentStepIndex < activeSteps.length - 1) {
+          nextStep();
+        } else {
+          gotoStep(0);
+        }
+      }, stepSpeed);
+    }
+
+    function stopPlay() {
+      if (playInterval) {
+        clearInterval(playInterval);
+        playInterval = null;
+      }
+      const elIcon = document.getElementById('play-icon-float');
+      if (elIcon) elIcon.innerText = "▶";
+      const elText = document.getElementById('play-text-float');
+      if (elText) elText.innerText = "Auto Play";
+    }
+
+    function setSpeed(spd) {
+      stepSpeed = spd;
+      document.getElementById('spd-1x').className = spd === 2600 ? "px-2 py-0.5 rounded text-xs font-mono bg-sky-950 text-sky-400 border border-sky-700" : "px-2 py-0.5 rounded text-xs font-mono text-slate-400 hover:text-white";
+      document.getElementById('spd-2x').className = spd === 1300 ? "px-2 py-0.5 rounded text-xs font-mono bg-sky-950 text-sky-400 border border-sky-700" : "px-2 py-0.5 rounded text-xs font-mono text-slate-400 hover:text-white";
+      if (playInterval) {
+        stopPlay();
+        startPlay();
+      }
+    }
+
+    // =========================================================================
+    // 11. SVG SEQUENCE RENDERER (LARGE, HIGH CONTRAST, CRISP LABELS)
+    // =========================================================================
+    function renderSvgSequence() {
+      const svg = document.getElementById('sequence-svg');
+      const step = activeSteps[currentStepIndex];
+      const width = 840;
+      const startY = 100; // Generous clearance below actor headers (actor boxes end at y=58)
+      const stepGap = activeSteps.length > 8 ? 38 : 42;
+      const height = Math.max(460, startY + (activeSteps.length * stepGap) + 30);
+
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+      let html = `<defs>
+        <!-- Sleek, smooth arrowheads with tip precisely at refX="10" and zero line overlap -->
+        <marker id="arrow-blue" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#38bdf8"/>
+        </marker>
+        <marker id="arrow-cyan" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#06b6d4"/>
+        </marker>
+        <marker id="arrow-emerald" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#10b981"/>
+        </marker>
+        <marker id="arrow-purple" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#c084fc"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#f59e0b"/>
+        </marker>
+      </defs>`;
+
+      // 1. Draw Actor Columns & Lifelines
+      activeActors.forEach(a => {
+        const isActive = (a.id === step.from || a.id === step.to);
+        
+        // Lifeline (starts cleanly below the actor box at y=58)
+        html += `<line x1="${a.x}" y1="58" x2="${a.x}" y2="${height - 15}" stroke="${isActive ? a.color : '#334155'}" stroke-width="${isActive ? 2.5 : 1.5}" stroke-dasharray="${isActive ? 'none' : '4 4'}" opacity="${isActive ? 1 : 0.35}"/>`;
+
+        // Actor Header Box (Ends at y = 12 + 46 = 58)
+        html += `
+          <g transform="translate(${a.x - 60}, 12)">
+            <rect width="120" height="46" rx="8" fill="${isActive ? '#1e293b' : '#0f172a'}" stroke="${isActive ? a.color : '#334155'}" stroke-width="${isActive ? 2.5 : 1}"/>
+            <text x="60" y="23" fill="${isActive ? '#ffffff' : '#94a3b8'}" font-size="13" font-weight="bold" text-anchor="middle">${a.name}</text>
+            <text x="60" y="38" fill="${isActive ? a.color : '#64748b'}" font-size="11" font-family="monospace" text-anchor="middle">${a.sub}</text>
+          </g>
+        `;
+      });
+
+      // 2. Draw Sequence Arrows & Labels
+      activeSteps.forEach((s, idx) => {
+        const y = startY + (idx * stepGap);
+        const fromActor = activeActors.find(a => a.id === s.from);
+        const toActor = activeActors.find(a => a.id === s.to);
+        const isCurrent = (idx === currentStepIndex);
+        const isPast = (idx < currentStepIndex);
+
+        let strokeColor = "#334155";
+        let strokeWidth = 1.5;
+        let opacity = 0.35;
+        let marker = "arrow-blue";
+
+        if (isCurrent) {
+          strokeColor = (s.type === 'cert') ? "#34d399" : (s.type === 'tls' ? "#c084fc" : (s.type === 'tunnel' ? "#fbbf24" : "#38bdf8"));
+          strokeWidth = 2.5;
+          opacity = 1.0;
+          marker = (s.type === 'cert') ? "arrow-emerald" : (s.type === 'tls' ? "arrow-purple" : (s.type === 'tunnel' ? "arrow-amber" : "arrow-blue"));
+        } else if (isPast) {
+          strokeColor = "#64748b";
+          strokeWidth = 1.5;
+          opacity = 0.65;
+          marker = "arrow-blue";
+        }
+
+        if (fromActor.x !== toActor.x) {
+          const isRight = toActor.x > fromActor.x;
+          // Stop line cleanly at the target lifeline so arrow tip lands precisely on target
+          const endX = isRight ? toActor.x - 2 : toActor.x + 2;
+          const midX = (fromActor.x + toActor.x) / 2;
+          const textWidth = Math.min(s.msg.length * 7.5 + 20, 420);
+          // Clamped pill coordinates: mathematically guaranteed never to overflow canvas edges!
+          const pillX = Math.max(15, Math.min(width - textWidth - 15, midX - textWidth / 2));
+          const textCenterX = pillX + textWidth / 2;
+
+          html += `
+            <g>
+              <line x1="${fromActor.x}" y1="${y}" x2="${endX}" y2="${y}" 
+                    stroke="${strokeColor}" stroke-width="${strokeWidth}" 
+                    stroke-linecap="butt"
+                    marker-end="url(#${marker})" opacity="${opacity}"/>
+              <!-- Backdrop pill clamped within SVG boundaries -->
+              <rect x="${pillX}" y="${y - 20}" width="${textWidth}" height="18" rx="4"
+                    fill="#090d16" fill-opacity="0.92" stroke="${isCurrent ? strokeColor : '#1e293b'}" stroke-width="${isCurrent ? 1 : 0.5}"/>
+              <text x="${textCenterX}" y="${y - 7}" 
+                    fill="${isCurrent ? '#ffffff' : (isPast ? '#cbd5e1' : '#64748b')}" 
+                    font-size="${isCurrent ? 12 : 11}" font-weight="${isCurrent ? '700' : '500'}" 
+                    font-family="ui-monospace, SFMono-Regular, monospace" text-anchor="middle">${s.msg}</text>
+            </g>
+          `;
+        } else {
+          // Self-call loopback (smooth cubic bezier curve)
+          const textWidth = Math.min(s.msg.length * 7.2 + 16, 280);
+          // If actor is near right edge, curve loop to left; otherwise to right
+          const goLeft = fromActor.x > width * 0.6;
+          const loopDir = goLeft ? -1 : 1;
+          const arcControlX = fromActor.x + (loopDir * 40);
+          const rectX = goLeft ? Math.max(15, fromActor.x - 45 - textWidth) : Math.min(width - textWidth - 15, fromActor.x + 45);
+
+          html += `
+            <g>
+              <path d="M ${fromActor.x} ${y - 6} C ${arcControlX} ${y - 18}, ${arcControlX} ${y + 18}, ${fromActor.x + (loopDir * 4)} ${y + 6}" 
+                    fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" 
+                    stroke-linecap="butt"
+                    marker-end="url(#${marker})" opacity="${opacity}"/>
+              <rect x="${rectX}" y="${y - 9}" width="${textWidth}" height="18" rx="4"
+                    fill="#090d16" fill-opacity="0.92" stroke="${isCurrent ? strokeColor : '#1e293b'}" stroke-width="${isCurrent ? 1 : 0.5}"/>
+              <text x="${rectX + textWidth / 2}" y="${y + 4}" fill="${isCurrent ? '#ffffff' : '#94a3b8'}" 
+                    font-size="${isCurrent ? 11.5 : 10.5}" font-weight="${isCurrent ? 'bold' : 'normal'}" 
+                    font-family="ui-monospace, SFMono-Regular, monospace" text-anchor="middle">${s.msg}</text>
+            </g>
+          `;
+        }
+      });
+
+      svg.innerHTML = html;
+    }
+
+    // MAIN RENDER LOOP
+    function renderCurrentStep() {
+      const step = activeSteps[currentStepIndex];
+
+      // Counters & Badges
+      const stepText = `Step ${currentStepIndex + 1} of ${activeSteps.length}`;
+      const elFloat = document.getElementById('float-step-counter');
+      if (elFloat) elFloat.innerText = stepText;
+
+      // Callout Box
+      document.getElementById('callout-icon').innerText = step.callout.icon;
+      document.getElementById('callout-title').innerText = step.callout.title;
+      document.getElementById('callout-stage').innerText = step.stage;
+
+      // Render Cards on Right Side with Examples
+      const cardsBox = document.getElementById('explainer-cards-container');
+      cardsBox.innerHTML = "";
+      step.cards.forEach(c => {
+        let exampleHtml = "";
+        if (c.example) {
+          exampleHtml = `
+            <div class="mt-2 p-2 bg-black/60 rounded-lg border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto whitespace-pre">${escapeHtml(c.example)}</div>
+          `;
+        }
+
+        cardsBox.innerHTML += `
+          <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5 shadow-md">
+            <div class="flex items-center justify-between">
+              <h4 class="font-bold text-xs text-sky-300">${c.title}</h4>
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">${c.tag}</span>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed">${c.body}</p>
+            ${exampleHtml}
+          </div>
+        `;
+      });
+
+      // Render SVG
+      renderSvgSequence();
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // KEYBOARD NAVIGATION
+    window.addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nextStep();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        prevStep();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        gotoStep(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        gotoStep(activeSteps.length - 1);
+      }
+    });
+
+    // INITIALIZE ON LOAD
+    switchScreen('direct-tls');
+  </script>
+
+  <!-- FLOATING PERSISTENT CONTROLS DOCK (Primary controller) -->
+  <aside id="floating-playback-dock" 
+         class="fixed bottom-5 right-5 z-50 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-2 transition-all">
+    <div class="flex items-center gap-1.5 pr-2 border-r border-slate-800">
+      <span class="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
+      <span class="text-xs font-mono font-bold text-sky-300" id="float-step-counter">Step 1 of 8</span>
+    </div>
+    <button onclick="gotoStep(0)" title="First Step (Home)" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold border border-slate-700 transition">⏮</button>
+    <button onclick="prevStep()" title="Previous Step (Left Arrow)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold border border-slate-700 transition">◀ Prev</button>
+    <button onclick="togglePlay()" id="btn-play-float" class="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold shadow transition flex items-center gap-1">
+      <span id="play-icon-float">▶</span> <span id="play-text-float">Auto Play</span>
+    </button>
+    <button onclick="nextStep()" title="Next Step (Right Arrow)" class="px-3.5 py-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-lg text-xs shadow-md shadow-sky-500/40 transition flex items-center gap-1">
+      <span>Next</span> <span>▶</span>
+    </button>
+    <button onclick="gotoStep(activeSteps.length - 1)" title="Last Step (End)" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold border border-slate-700 transition">⏭</button>
+    <div class="h-4 w-[1px] bg-slate-700 mx-1"></div>
+    <button onclick="setSpeed(2600)" id="spd-1x" class="px-2 py-0.5 rounded text-xs font-mono bg-sky-950 text-sky-400 border border-sky-700">1x</button>
+    <button onclick="setSpeed(1300)" id="spd-2x" class="px-2 py-0.5 rounded text-xs font-mono text-slate-400 hover:text-white">2x</button>
+  </aside>
+</body>
+</html>

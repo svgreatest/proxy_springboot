@@ -1,0 +1,1910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BCFIPS Proxy Gateway | Capturing & In-Memory Trust Manager</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .font-mono-code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .matrix-active {
+            border-color: #06b6d4 !important;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.25) !important;
+            background-color: rgba(15, 23, 42, 0.95) !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
+
+    <!-- Top Navigation Header -->
+    <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50 shadow-lg">
+        <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                <i class="fa-solid fa-shield-halved text-white text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                    BCFIPS Proxy Gateway
+                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">FIPS 140-3 Mode</span>
+                </h1>
+                <p class="text-xs text-slate-400">Capturing Trust Manager &bull; In-Memory Trust Store &bull; Multi-Stage TLS Proxy Engine (RFC 2817)</p>
+            </div>
+        </div>
+
+        <!-- Screen Navigation Tabs -->
+        <nav class="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+            <button id="navBtnProbe" onclick="switchScreen('probe')" 
+                    class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 shadow">
+                <i class="fa-solid fa-network-wired"></i>
+                <span>Proxy Probe Wizard</span>
+            </button>
+            <button id="navBtnTrustStore" onclick="switchScreen('truststore')" 
+                    class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 text-slate-400 hover:text-slate-200">
+                <i class="fa-solid fa-building-columns"></i>
+                <span>Root CA Explorer & Inspector</span>
+                <span id="navStoreCountBadge" class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300 border border-slate-700 font-mono-code">0</span>
+            </button>
+            <a href="/guide.html" target="_blank"
+               class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 text-blue-400 hover:text-blue-300 hover:bg-slate-900 border border-blue-500/30">
+                <i class="fa-solid fa-book-open"></i>
+                <span>Architecture Guide</span>
+                <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+            </a>
+        </nav>
+
+        <!-- System Capability Badges -->
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 font-mono-code">
+                <i class="fa-brands fa-java text-orange-400 mr-1"></i>Java 21
+            </span>
+            <span class="px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-indigo-300 font-mono-code">
+                <i class="fa-solid fa-lock text-indigo-400 mr-1"></i>bc-fips:1.0.2.5
+            </span>
+            <span class="px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-purple-300 font-mono-code">
+                <i class="fa-solid fa-network-wired text-purple-400 mr-1"></i>BCJSSE TLS
+            </span>
+            <span class="px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-emerald-300 font-mono-code">
+                <i class="fa-solid fa-database text-emerald-400 mr-1"></i>BCFKS Keystore
+            </span>
+        </div>
+    </header>
+
+    <!-- Screen 1: Proxy Probe Wizard Container -->
+    <div id="screenProbe" class="flex flex-col flex-1">
+
+    <!-- Top Full-Width Architectural Combinations Matrix -->
+    <div class="px-6 pt-5 pb-1 max-w-[1800px] w-full mx-auto">
+        <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-md">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-table-cells text-cyan-400 text-base"></i>
+                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-200">
+                        Proxy Combinations Matrix (All 8 Modes + Direct)
+                    </h2>
+                    <span class="text-xs text-slate-400 ml-2 hidden sm:inline">Click any combination to auto-configure and explore its TLS behavior</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="loadTestHarnessMitmCert()" class="text-xs px-2.5 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-download"></i>
+                        <span>Load Harness mitmproxy CA</span>
+                    </button>
+                    <button onclick="loadTestHarnessHttpsProxyCert()" class="text-xs px-2.5 py-1 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30 hover:bg-purple-500/20 transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-lock"></i>
+                        <span>Load Harness HTTPS Proxy CA (:8443)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 9 Interactive Cards Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2.5 text-xs">
+                
+                <!-- Combo 1: HTTP Plain Passthrough -->
+                <button id="comboCard-1" onclick="applyCombination(1)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">HTTP</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:3128</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Squid Plain</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-emerald-400">Tunnel</span> &bull; 
+                        <span class="text-slate-400">No Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 2: HTTP Passthrough + Auth -->
+                <button id="comboCard-2" onclick="applyCombination(2)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">HTTP</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:3129</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Squid Auth</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-emerald-400">Tunnel</span> &bull; 
+                        <span class="text-amber-400">Basic Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 3: HTTP MITM Inspection -->
+                <button id="comboCard-3" onclick="applyCombination(3)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group matrix-active">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">HTTP</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:8888</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">mitmproxy</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-rose-400 font-semibold">Inspection</span> &bull; 
+                        <span class="text-slate-400">No Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 4: HTTP MITM + Auth -->
+                <button id="comboCard-4" onclick="applyCombination(4)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">HTTP</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:8888</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">mitm + Auth</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-rose-400 font-semibold">Inspection</span> &bull; 
+                        <span class="text-amber-400">Basic Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 5: HTTPS Plain Passthrough -->
+                <button id="comboCard-5" onclick="applyCombination(5)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">HTTPS</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:8443</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Secure Forward</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-emerald-400">Tunnel</span> &bull; 
+                        <span class="text-slate-400">No Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 6: HTTPS Passthrough + Auth -->
+                <button id="comboCard-6" onclick="applyCombination(6)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">HTTPS</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:8443</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Secure + Auth</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-emerald-400">Tunnel</span> &bull; 
+                        <span class="text-amber-400">Basic Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 7: HTTPS MITM Inspection -->
+                <button id="comboCard-7" onclick="applyCombination(7)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">HTTPS</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:8443</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Secure MITM</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-rose-400 font-semibold">Inspection</span> &bull; 
+                        <span class="text-slate-400">No Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 8: HTTPS MITM + Auth -->
+                <button id="comboCard-8" onclick="applyCombination(8)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">HTTPS</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">:8443</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Sec MITM + Auth</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-rose-400 font-semibold">Inspection</span> &bull; 
+                        <span class="text-amber-400">Basic Auth</span>
+                    </div>
+                </button>
+
+                <!-- Combo 9: Direct (No Proxy) -->
+                <button id="comboCard-9" onclick="applyCombination(9)" 
+                        class="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 hover:border-slate-700 text-left transition flex flex-col justify-between gap-1.5 group">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">DIRECT</span>
+                        <span class="text-[10px] text-slate-500 font-mono-code">No Proxy</span>
+                    </div>
+                    <div class="font-semibold text-slate-200 group-hover:text-cyan-400 text-xs">Direct Internet</div>
+                    <div class="flex flex-wrap gap-1 text-[10px]">
+                        <span class="text-slate-400">No Tunnel</span> &bull; 
+                        <span class="text-slate-400">No Auth</span>
+                    </div>
+                </button>
+
+            </div>
+
+            <!-- Active Combination Architectural Blueprint Banner -->
+            <div id="combinationBlueprint" class="mt-3 bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                    <div class="h-8 w-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shrink-0">
+                        <i id="blueprintIcon" class="fa-solid fa-eye text-cyan-400 text-sm"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span id="blueprintTitle" class="font-bold text-slate-200">Mode 3: HTTP Proxy with TLS Inspection (mitmproxy :8888)</span>
+                            <span id="blueprintModeBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">TLS MITM Inspection</span>
+                        </div>
+                        <p id="blueprintDesc" class="text-[11px] text-slate-400 mt-0.5">
+                            Client establishes TCP to proxy on 8888 &bull; Proxy intercepts CONNECT &bull; Dynamically generates TLS cert signed by custom Root CA &bull; Ephemeral verification with candidate CA required!
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <span class="text-[11px] text-slate-500 font-mono-code">Required Anchor:</span>
+                    <span id="blueprintAnchorBadge" class="text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Candidate Root CA</span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Main 3-Column Layout -->
+    <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1800px] w-full mx-auto">
+
+        <!-- Column 1: Configuration & Input Controls (4 cols) -->
+        <section class="lg:col-span-4 flex flex-col gap-6">
+
+            <!-- Connection Form Card -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-cyan-400"></i> Target & Proxy Configuration
+                    </h2>
+                    <span class="text-[10px] font-mono-code text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">Single Probe API</span>
+                </div>
+
+                <!-- Target URL -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs font-medium text-slate-300">Target Website URL</label>
+                        <div class="flex items-center gap-1.5 text-[10px]">
+                            <button type="button" onclick="setTargetPreset('https://httpbin.org/get')" class="text-cyan-400 hover:underline">https://</button>
+                            <span class="text-slate-600">|</span>
+                            <button type="button" onclick="setTargetPreset('http://httpbin.org/get')" class="text-slate-400 hover:underline">http://</button>
+                        </div>
+                    </div>
+                    <input id="targetUrl" type="url" value="https://httpbin.org/get" oninput="syncInputsToMatrix()"
+                           class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono-code"
+                           placeholder="https://example.com/api">
+                </div>
+
+                <!-- Proxy Host & Port -->
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="col-span-2">
+                        <label class="block text-xs font-medium text-slate-300 mb-1">Proxy Host</label>
+                        <input id="proxyHost" type="text" value="127.0.0.1" oninput="syncInputsToMatrix()"
+                               class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono-code"
+                               placeholder="127.0.0.1 or proxy.corp">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-300 mb-1">Port</label>
+                        <input id="proxyPort" type="number" value="8888" oninput="syncInputsToMatrix()"
+                               class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-mono-code">
+                    </div>
+                </div>
+
+                <!-- Proxy Protocol (Direct to Proxy) -->
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Proxy Transport Protocol</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label class="flex items-center gap-2 p-2.5 bg-slate-950 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700">
+                            <input type="radio" name="proxyProtocol" value="HTTP" checked onchange="syncInputsToMatrix()" class="text-cyan-500 focus:ring-0">
+                            <div>
+                                <span class="text-xs font-semibold text-slate-200 block">HTTP Forward</span>
+                                <span class="text-[10px] text-slate-500 block">Plaintext TCP to proxy</span>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-2 p-2.5 bg-slate-950 border border-slate-800 rounded-lg cursor-pointer hover:border-slate-700">
+                            <input type="radio" name="proxyProtocol" value="HTTPS" onchange="syncInputsToMatrix()" class="text-cyan-500 focus:ring-0">
+                            <div>
+                                <span class="text-xs font-semibold text-slate-200 block">HTTPS Proxy (TLS)</span>
+                                <span class="text-[10px] text-slate-500 block">Direct TLS handshake to proxy</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Proxy Inspection Mode Indicator -->
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Proxy Handling Mode</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" id="btnModeTunnel" onclick="setProxyMode('tunnel')"
+                                class="p-2 rounded-lg bg-slate-950 border border-slate-800 text-left transition flex items-center gap-2">
+                            <i class="fa-solid fa-arrows-split-up-and-left text-emerald-400 text-xs"></i>
+                            <div>
+                                <span class="text-xs font-semibold text-slate-200 block">Passthrough Tunnel</span>
+                                <span class="text-[10px] text-slate-500 block">Blind TCP forwarding</span>
+                            </div>
+                        </button>
+                        <button type="button" id="btnModeMitm" onclick="setProxyMode('mitm')"
+                                class="p-2 rounded-lg bg-slate-950 border border-cyan-500/50 text-left transition flex items-center gap-2 bg-cyan-950/20">
+                            <i class="fa-solid fa-eye text-rose-400 text-xs"></i>
+                            <div>
+                                <span class="text-xs font-semibold text-cyan-300 block">TLS Inspection</span>
+                                <span class="text-[10px] text-slate-400 block">Decrypt & re-sign</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Proxy Authentication Accordion -->
+                <div class="border-t border-slate-800 pt-3">
+                    <div class="flex items-center justify-between cursor-pointer" onclick="toggleAuth()">
+                        <span class="text-xs font-medium text-slate-300 flex items-center gap-2">
+                            <i class="fa-solid fa-user-lock text-slate-400"></i> Proxy Authentication (Basic Auth)
+                        </span>
+                        <div class="flex items-center gap-2">
+                            <span id="authBadge" class="text-[10px] text-slate-500">Anonymous</span>
+                            <i id="authChevron" class="fa-solid fa-chevron-down text-xs text-slate-500 transition-transform"></i>
+                        </div>
+                    </div>
+                    <div id="authFields" class="hidden grid grid-cols-2 gap-3 mt-3">
+                        <div>
+                            <label class="block text-[11px] text-slate-400 mb-1">Username</label>
+                            <input id="proxyUser" type="text" placeholder="testuser" oninput="syncInputsToMatrix()"
+                                   class="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 font-mono-code focus:outline-none focus:border-cyan-500">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-slate-400 mb-1">Password</label>
+                            <input id="proxyPass" type="password" placeholder="••••••••" oninput="syncInputsToMatrix()"
+                                   class="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 font-mono-code focus:outline-none focus:border-cyan-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Probe Action Button -->
+                <button id="btnProbe" onclick="executeProbe(false)" 
+                        class="mt-2 w-full py-3 px-4 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold rounded-xl text-sm transition shadow-lg shadow-cyan-600/20 flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-satellite-dish"></i>
+                    <span>Step 1: Probe Connection via Proxy</span>
+                </button>
+            </div>
+
+            <!-- Architectural Legend & FIPS Isolation Notice -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm text-xs text-slate-400 space-y-2">
+                <div class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <i class="fa-solid fa-shield-virus text-emerald-400"></i>
+                    <span>Strict Trust Anchor Isolation Rules</span>
+                </div>
+                <p class="text-[11px] leading-relaxed">
+                    1. <b class="text-slate-200">Ephemeral In-Memory First:</b> Candidate CAs are injected only into a cloned in-memory BCFKS store during probe.
+                </p>
+                <p class="text-[11px] leading-relaxed">
+                    2. <b class="text-slate-200">Zero Persistent Touches on Failure:</b> If the connection fails for any reason, the disk keystore remains 100% untouched.
+                </p>
+                <p class="text-[11px] leading-relaxed">
+                    3. <b class="text-slate-200">Only Required Anchors Committed:</b> If a candidate CA was provided but the connection was validated by an existing system anchor, commit is blocked to prevent keystore pollution.
+                </p>
+            </div>
+
+        </section>
+
+        <!-- Column 2: Interactive Discovery Wizard & Cert Inspector (4 cols) -->
+        <section class="lg:col-span-4 flex flex-col gap-6">
+
+            <!-- Result Status Banner -->
+            <div id="statusBanner" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+                <div class="flex items-center gap-3">
+                    <div id="statusIcon" class="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 shrink-0">
+                        <i class="fa-solid fa-shield text-slate-400 text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 id="statusTitle" class="text-sm font-bold text-slate-200">Awaiting Connection Probe</h3>
+                        <p id="statusDesc" class="text-xs text-slate-400 mt-0.5">Click "Step 1: Probe Connection" to test routing and capture TLS certificates.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Isolated Active Trust Anchor Card (Dedicated visualization for connection anchor) -->
+            <div id="anchorCard" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-anchor text-cyan-400"></i> Verified Trust Anchor
+                    </h3>
+                    <span id="anchorSourceBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 border uppercase">Source</span>
+                </div>
+                
+                <div id="anchorDetailsBox" class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono-code flex flex-col gap-1.5">
+                    <div><span class="text-slate-500">Subject:</span> <span id="anchorSubject" class="text-slate-200 font-semibold"></span></div>
+                    <div><span class="text-slate-500">Issuer:</span> <span id="anchorIssuer" class="text-slate-300"></span></div>
+                    <div><span class="text-slate-500">SHA-256:</span> <span id="anchorFingerprint" class="text-cyan-400 text-[10px]"></span></div>
+                    <div><span class="text-slate-500">Self-Signed:</span> <span id="anchorSelfSigned" class="text-amber-400 font-semibold"></span></div>
+                </div>
+
+                <div id="anchorGuidanceText" class="text-[11px] leading-relaxed">
+                    <!-- Guidance text populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Root CA Input & Verification Engine -->
+            <div id="missingRootCard" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col gap-4">
+                <div class="flex items-start justify-between">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-certificate text-amber-400 text-base"></i>
+                        <h3 class="text-sm font-bold text-slate-200">Root CA Input & Safe Verification</h3>
+                    </div>
+                    <span id="rootCardBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-cyan-400 border border-slate-700 uppercase">Ephemeral Memory</span>
+                </div>
+
+                <p class="text-xs text-slate-400 leading-relaxed">
+                    Input a custom or inspection Root CA below. The probe tests TLS against an
+                    <span class="text-amber-300 font-semibold">in-memory keystore</span>.
+                    <span class="text-emerald-400 font-semibold">The persistent BCFKS trust store is updated ONLY when verification succeeds and the anchor was required.</span>
+                </p>
+
+                <!-- Missing Cert Summary Box (Shown when TLS probe discovers untrusted cert) -->
+                <div id="missingCertSummary" class="hidden bg-amber-950/40 border border-amber-500/40 rounded-lg p-3 text-xs flex flex-col gap-1 font-mono-code">
+                    <div class="text-amber-300 font-bold mb-1 flex items-center gap-1.5">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <span>Discovered Missing Root / Intermediate CA:</span>
+                    </div>
+                    <div class="text-slate-400">Subject: <span id="missingSubject" class="text-slate-200 font-medium"></span></div>
+                    <div class="text-slate-400">Issuer:  <span id="missingIssuer" class="text-slate-200 font-medium"></span></div>
+                    <div class="text-slate-400">Fingerprint: <span id="missingFp" class="text-cyan-400"></span></div>
+                </div>
+
+                <!-- Input Candidate Root PEM -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="text-xs font-semibold text-slate-300">Candidate Root CA PEM:</label>
+                        <div class="flex items-center gap-2">
+                            <button id="btnAutoFillPem" onclick="autoFillPresentedPem()" class="hidden text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold underline flex items-center gap-1">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Use Presented CA
+                            </button>
+                            <button type="button" onclick="loadTestHarnessMitmCert()" class="text-[11px] text-amber-400 hover:text-amber-300 font-semibold underline flex items-center gap-1">
+                                <i class="fa-solid fa-file-arrow-down"></i> mitm CA
+                            </button>
+                            <button type="button" onclick="loadTestHarnessHttpsProxyCert()" class="text-[11px] text-purple-400 hover:text-purple-300 font-semibold underline flex items-center gap-1">
+                                <i class="fa-solid fa-lock"></i> Proxy 8443 CA
+                            </button>
+                        </div>
+                    </div>
+                    <textarea id="candidatePem" rows="5" placeholder="-----BEGIN CERTIFICATE-----&#10;Paste candidate Root CA PEM here or click 'Load Harness CA'&#10;-----END CERTIFICATE-----"
+                              class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-[11px] text-slate-200 font-mono-code focus:outline-none focus:border-cyan-500"></textarea>
+                </div>
+
+                <!-- Step 2 & 3 Action Buttons -->
+                <div class="flex flex-col gap-2">
+                    <button id="btnVerifyInMemory" onclick="executeProbe(true)"
+                            class="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded-lg text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-amber-600/20">
+                        <i class="fa-solid fa-vial"></i>
+                        <span>Step 2: Verify with Candidate Root CA in Ephemeral Memory</span>
+                    </button>
+                    
+                    <button id="btnCommit" onclick="executeCommit()" disabled
+                            class="w-full py-2.5 px-3 bg-slate-800 text-slate-500 cursor-not-allowed font-bold rounded-lg text-xs transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-lock"></i>
+                        <span id="commitBtnText">Step 3: Commit Verified Root CA to BCFKS Store</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Captured Certificate Chain Visualizer -->
+            <div id="certChainCard" class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i class="fa-solid fa-link text-indigo-400"></i> Captured Certificate Chain
+                    </h3>
+                    <span id="chainCountBadge" class="text-xs text-slate-500 font-mono-code">0 certificates</span>
+                </div>
+                <div id="chainTimeline" class="flex flex-col gap-2.5 text-xs">
+                    <p class="text-slate-500 italic text-xs py-4 text-center">No certificates captured yet. Run a probe to inspect.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Column 3: Live Educational Logs & Persistent TrustStore (4 cols) -->
+        <section class="lg:col-span-4 flex flex-col gap-6">
+
+            <!-- Tabs Header -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-1.5 flex gap-1">
+                <button id="tabBtnLogs" onclick="switchRightTab('logs')" class="flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-slate-800 text-cyan-400 transition flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-terminal"></i>
+                    <span>Live Handshake Logs</span>
+                </button>
+                <button id="tabBtnStore" onclick="switchRightTab('store')" class="flex-1 py-2 px-3 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-vault"></i>
+                    <span>Persistent TrustStore (<span id="storeCount">0</span>)</span>
+                </button>
+            </div>
+
+            <!-- Tab 1: Live Diagnostic Logs -->
+            <div id="tabContentLogs" class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm flex flex-col h-[700px]">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-2">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Educational Handshake Trace</span>
+                    <button onclick="clearLogs()" class="text-[11px] text-slate-500 hover:text-slate-300">Clear</button>
+                </div>
+                <div id="liveLogsContainer" class="flex-1 overflow-y-auto space-y-1 font-mono-code text-[11px] text-slate-300 pr-1">
+                    <div class="text-slate-600 italic">Waiting for probe execution... Generous logging will appear here.</div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Persistent TrustStore Manager -->
+            <div id="tabContentStore" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm flex flex-col h-[700px]">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-2">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Committed Trust Anchors</span>
+                    <button onclick="loadTrustStore()" class="text-[11px] text-cyan-400 hover:underline">Refresh</button>
+                </div>
+                <div id="trustStoreList" class="flex-1 overflow-y-auto space-y-3 pr-1">
+                    <!-- Populated dynamically -->
+                </div>
+
+                <!-- Direct Import to BCFKS Keystore -->
+                <div class="border-t border-slate-800 pt-3 mt-2">
+                    <span class="block text-xs font-semibold text-slate-300 mb-2">
+                        <i class="fa-solid fa-file-import text-cyan-400 mr-1"></i>Direct Import Root CA
+                    </span>
+                    <input id="directAlias" type="text" placeholder="Alias (e.g. mitmproxy-ca)"
+                           class="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono-code mb-2 text-slate-200 focus:outline-none focus:border-cyan-500">
+                    <textarea id="directPem" rows="3" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+                              class="w-full p-2 bg-slate-950 border border-slate-700 rounded-lg text-[10px] font-mono-code mb-2 text-slate-200 focus:outline-none focus:border-cyan-500"></textarea>
+                    <button onclick="executeDirectImport()" 
+                            class="w-full py-2 px-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs transition flex items-center justify-center gap-1.5 shadow">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                        <span>Import into BCFKS Keystore</span>
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+    </div>
+    <!-- End Screen 1: Proxy Probe Wizard -->
+
+    <!-- Screen 2: Root CA Trust Store & Inspector Screen -->
+    <div id="screenTrustStore" class="hidden flex-1 p-6 max-w-[1800px] w-full mx-auto flex flex-col gap-5">
+        <!-- Top Action & Search Bar -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="h-10 w-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                    <i class="fa-solid fa-building-columns text-xl"></i>
+                </div>
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        Root CA Trust Store & Inspector
+                        <span id="trustStoreTotalBadge" class="text-xs font-mono-code px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">Loading...</span>
+                    </h2>
+                    <p class="text-xs text-slate-400">
+                        Inspect active trust anchors in the encrypted BCFKS keystore with educational explanations & cryptographic verification.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Filter and Search Controls -->
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Search Input -->
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-slate-500"></i>
+                    <input id="caSearchInput" type="text" oninput="filterCaList()" placeholder="Filter by Common Name, Org, Alias..."
+                           class="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 font-mono-code focus:outline-none focus:border-cyan-500 w-64">
+                </div>
+
+                <!-- Filter Pills -->
+                <div class="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+                    <button id="filterBtnAll" onclick="setCaFilter('all')" class="px-3 py-1 rounded-md font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 transition">
+                        All (<span id="countAll">0</span>)
+                    </button>
+                    <button id="filterBtnCustom" onclick="setCaFilter('custom')" class="px-3 py-1 rounded-md font-semibold text-slate-400 hover:text-slate-200 transition">
+                        Custom Committed (<span id="countCustom">0</span>)
+                    </button>
+                    <button id="filterBtnSystem" onclick="setCaFilter('system')" class="px-3 py-1 rounded-md font-semibold text-slate-400 hover:text-slate-200 transition">
+                        System JVM (<span id="countSystem">0</span>)
+                    </button>
+                </div>
+
+                <!-- Action Buttons -->
+                <button onclick="openDirectImportModal()" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg text-xs transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Import Root CA</span>
+                </button>
+                
+                <button onclick="loadAllTrustStoreCAs(true)" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition" title="Refresh TrustStore">
+                    <i class="fa-solid fa-rotate"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Split-Pane Grid: Left = CA Cards List (5 cols), Right = Deep Inspector (7 cols) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <!-- Left Pane: Scrollable List of Root CAs (5 cols) -->
+            <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm flex flex-col h-[780px]">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-list-check text-cyan-400 text-sm"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Installed Root Anchors</span>
+                    </div>
+                    <span id="showingCountBadge" class="text-[11px] font-mono-code text-slate-500">Showing 0 CAs</span>
+                </div>
+
+                <!-- List Container -->
+                <div id="caCardsContainer" class="flex-1 overflow-y-auto space-y-2 pr-1">
+                    <p class="text-slate-500 italic text-xs py-8 text-center">Loading trust anchors from keystore...</p>
+                </div>
+            </div>
+
+            <!-- Right Pane: Deep Certificate Inspector & Educational Guide (7 cols) -->
+            <div id="inspectorPane" class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col h-[780px] overflow-y-auto">
+                <!-- Initial placeholder when no cert selected -->
+                <div id="inspectorEmptyState" class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-500">
+                    <div class="h-16 w-16 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-600 text-3xl mb-3">
+                        <i class="fa-solid fa-certificate"></i>
+                    </div>
+                    <h3 class="text-sm font-bold text-slate-300 mb-1">Select a Root CA to Inspect</h3>
+                    <p class="text-xs max-w-md">Click any certificate from the left list to view its complete X.509 cryptographic attributes, security parameters, and plain-English educational explanations.</p>
+                </div>
+
+                <!-- Active Certificate Content -->
+                <div id="inspectorActiveContent" class="hidden flex flex-col gap-4">
+                    <!-- Top Inspector Header Card -->
+                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col gap-3">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="flex items-start gap-3">
+                                <div id="inspBadgeIcon" class="h-11 w-11 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 text-xl shrink-0 mt-0.5">
+                                    <i class="fa-solid fa-building-columns"></i>
+                                </div>
+                                <div>
+                                    <div class="flex flex-wrap items-center gap-2 mb-1">
+                                        <h3 id="inspCommonName" class="text-base font-bold text-white font-mono-code break-all">Common Name</h3>
+                                        <span id="inspTypeBadge" class="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">ROOT CA</span>
+                                        <span id="inspSelfSignedBadge" class="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">SELF-SIGNED</span>
+                                    </div>
+                                    <div id="inspOrg" class="text-xs text-slate-400">Organization Name</div>
+                                    <div class="text-[11px] font-mono-code text-cyan-400 mt-1">
+                                        Keystore Alias: <span id="inspAlias" class="text-slate-300 font-bold">alias-name</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Actions -->
+                            <div class="flex items-center gap-2">
+                                <button id="btnInspTestProbe" onclick="useCertInProbe()" class="px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow" title="Test with this Certificate in Probe Wizard">
+                                    <i class="fa-solid fa-plug"></i>
+                                    <span>Test in Probe</span>
+                                </button>
+                                <button id="btnInspDelete" onclick="deleteCurrentInspectedCa()" class="hidden px-2.5 py-1.5 rounded-lg bg-red-600/20 text-red-300 border border-red-500/30 hover:bg-red-600/30 text-xs font-semibold flex items-center gap-1.5 transition" title="Delete custom anchor">
+                                    <i class="fa-solid fa-trash"></i>
+                                    <span>Delete</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Educational PKI Explanation Box -->
+                    <div class="bg-indigo-950/30 border border-indigo-500/30 rounded-xl p-4 flex flex-col gap-2">
+                        <div class="flex items-center gap-2 text-indigo-300 text-xs font-bold uppercase tracking-wider">
+                            <i class="fa-solid fa-graduation-cap text-base"></i>
+                            <span>Educational PKI & Cryptographic Breakdown</span>
+                        </div>
+                        <div id="inspEducationalText" class="text-xs text-slate-300 leading-relaxed font-sans space-y-2">
+                            <!-- Populated with explanation -->
+                        </div>
+                    </div>
+
+                    <!-- Structured Technical Fields Grid -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        
+                        <!-- Subject DN -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 sm:col-span-2">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Subject Distinguished Name (Subject DN)</span>
+                            <div id="inspSubjectDn" class="font-mono-code text-slate-200 text-[11px] break-all"></div>
+                        </div>
+
+                        <!-- Issuer DN -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 sm:col-span-2">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Issuer Distinguished Name (Issuer DN)</span>
+                            <div id="inspIssuerDn" class="font-mono-code text-slate-200 text-[11px] break-all"></div>
+                        </div>
+
+                        <!-- Validity Not Before -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Valid From (Not Before)</span>
+                            <div id="inspNotBefore" class="font-mono-code text-slate-200 text-xs"></div>
+                        </div>
+
+                        <!-- Validity Not After -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Expires On (Not After)</span>
+                            <div id="inspNotAfter" class="font-mono-code text-slate-200 text-xs"></div>
+                        </div>
+
+                        <!-- Public Key Algorithm & Size -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Public Key & Key Size</span>
+                            <div id="inspKeyDetails" class="font-mono-code text-cyan-400 font-bold text-xs"></div>
+                        </div>
+
+                        <!-- Signature Algorithm -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Signature Algorithm</span>
+                            <div id="inspSigAlg" class="font-mono-code text-indigo-400 font-bold text-xs"></div>
+                        </div>
+
+                        <!-- Basic Constraints -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">X.509v3 Basic Constraints</span>
+                            <div id="inspBasicConstraints" class="font-mono-code text-slate-200 text-xs"></div>
+                        </div>
+
+                        <!-- Serial Number -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1">Serial Number (Hex)</span>
+                            <div id="inspSerial" class="font-mono-code text-slate-400 text-xs break-all"></div>
+                        </div>
+
+                        <!-- Key Usage Extensions -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 sm:col-span-2">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 block mb-1.5">Authorized Key Usages</span>
+                            <div id="inspKeyUsagesContainer" class="flex flex-wrap gap-1.5"></div>
+                        </div>
+
+                        <!-- Fingerprints -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 sm:col-span-2 flex flex-col gap-2">
+                            <div>
+                                <span class="text-[10px] uppercase font-bold text-slate-500 block mb-0.5">SHA-256 Fingerprint (Thumbprint)</span>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span id="inspSha256" class="font-mono-code text-[11px] text-emerald-400 break-all"></span>
+                                    <button onclick="copyElementText('inspSha256')" class="text-slate-500 hover:text-slate-300 text-xs shrink-0" title="Copy Fingerprint"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                            </div>
+                            <div class="border-t border-slate-800/60 pt-2">
+                                <span class="text-[10px] uppercase font-bold text-slate-500 block mb-0.5">SHA-1 Fingerprint</span>
+                                <div class="flex items-center justify-between gap-2">
+                                    <span id="inspSha1" class="font-mono-code text-[11px] text-slate-400 break-all"></span>
+                                    <button onclick="copyElementText('inspSha1')" class="text-slate-500 hover:text-slate-300 text-xs shrink-0" title="Copy Fingerprint"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Raw PEM Certificate Box with Copy Button -->
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 sm:col-span-2 flex flex-col gap-2">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[10px] uppercase font-bold text-slate-500">RFC 7468 PEM Representation</span>
+                                <button onclick="copyElementText('inspPemBlock', true)" class="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1">
+                                    <i class="fa-solid fa-copy"></i> Copy PEM
+                                </button>
+                            </div>
+                            <textarea id="inspPemBlock" readonly rows="5" class="w-full p-2 bg-slate-900 border border-slate-800 rounded text-[10px] font-mono-code text-slate-300 focus:outline-none"></textarea>
+                        </div>
+
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+    <!-- End Screen 2 -->
+
+    <!-- Direct Import Modal Dialog -->
+    <div id="directImportModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl flex flex-col gap-4">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div class="flex items-center gap-2 text-white font-bold text-sm">
+                    <i class="fa-solid fa-file-import text-cyan-400"></i>
+                    <span>Direct Import Root CA to BCFKS Keystore</span>
+                </div>
+                <button onclick="closeDirectImportModal()" class="text-slate-500 hover:text-slate-300">
+                    <i class="fa-solid fa-xmark text-base"></i>
+                </button>
+            </div>
+            <div class="flex flex-col gap-3 text-xs">
+                <div>
+                    <label class="block text-slate-300 font-medium mb-1">Keystore Alias (Optional)</label>
+                    <input id="modalAlias" type="text" placeholder="e.g. corporate-internal-ca"
+                           class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg font-mono-code text-slate-100 focus:outline-none focus:border-cyan-500">
+                    <span class="text-[10px] text-slate-500">If omitted, an alias will be generated automatically.</span>
+                </div>
+                <div>
+                    <label class="block text-slate-300 font-medium mb-1">Root CA PEM Certificate</label>
+                    <textarea id="modalPem" rows="7" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+                              class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg font-mono-code text-[11px] text-slate-100 focus:outline-none focus:border-cyan-500"></textarea>
+                    <span class="text-[10px] text-slate-500">Must be a valid self-signed Root CA certificate. Intermediate CAs and leaf certificates will be rejected.</span>
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button onclick="closeDirectImportModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition">Cancel</button>
+                <button onclick="executeModalImport()" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span>Import to Keystore</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 border-t border-slate-800 px-6 py-3 text-center text-xs text-slate-500">
+        BCFIPS Capturing Trust Manager &bull; Multi-Stage TLS Proxy Engine (RFC 2817) &bull; Spring Boot 3.3.4
+    </footer>
+
+    <!-- Frontend Controller Script -->
+    <script>
+        let lastProbeResponse = null;
+        let currentMode = 'mitm'; // 'tunnel' or 'mitm'
+
+        // 9 Proxy Matrix Combinations Definitions
+        const combinations = {
+            1: {
+                id: 1, name: "Squid HTTP Plain", protocol: "HTTP", mode: "tunnel",
+                host: "127.0.0.1", port: 3128, auth: false, user: "", pass: "",
+                target: "https://httpbin.org/get",
+                title: "Mode 1: Cleartext HTTP Forward Proxy (No Auth)",
+                desc: "Client sends cleartext HTTP CONNECT to 127.0.0.1:3128 &bull; Squid tunnels TCP &bull; Direct TLS to httpbin.org &bull; Validated by JVM Public Root.",
+                anchor: "Default JVM Root (Amazon/DigiCert)", icon: "fa-server"
+            },
+            2: {
+                id: 2, name: "Squid HTTP + Basic Auth", protocol: "HTTP", mode: "tunnel",
+                host: "127.0.0.1", port: 3129, auth: true, user: "testuser", pass: "testpass",
+                target: "https://httpbin.org/get",
+                title: "Mode 2: Cleartext HTTP Forward Proxy with Basic Auth",
+                desc: "Client sends CONNECT with 'Proxy-Authorization: Basic ...' to 127.0.0.1:3129 &bull; Squid authenticates and opens tunnel &bull; Direct TLS to target.",
+                anchor: "Default JVM Root (Amazon/DigiCert)", icon: "fa-key"
+            },
+            3: {
+                id: 3, name: "mitmproxy TLS Inspection", protocol: "HTTP", mode: "mitm",
+                host: "127.0.0.1", port: 8888, auth: false, user: "", pass: "",
+                target: "https://httpbin.org/get",
+                title: "Mode 3: Cleartext HTTP Proxy with TLS Inspection (mitmproxy)",
+                desc: "Client sends CONNECT to 127.0.0.1:8888 &bull; mitmproxy terminates TLS, generates dynamic leaf &bull; Requires mitmproxy Root CA candidate!",
+                anchor: "Candidate Root CA (mitmproxy)", icon: "fa-eye"
+            },
+            4: {
+                id: 4, name: "mitmproxy + Basic Auth", protocol: "HTTP", mode: "mitm",
+                host: "127.0.0.1", port: 8888, auth: true, user: "testuser", pass: "testpass",
+                target: "https://httpbin.org/get",
+                title: "Mode 4: HTTP Proxy with Basic Auth and TLS Inspection",
+                desc: "Client authenticates with proxy credentials &bull; Proxy intercepts TLS &bull; Requires both proxy credentials and candidate Root CA.",
+                anchor: "Candidate Root CA (mitmproxy)", icon: "fa-user-shield"
+            },
+            5: {
+                id: 5, name: "HTTPS Forward Proxy", protocol: "HTTPS", mode: "tunnel",
+                host: "127.0.0.1", port: 8443, auth: false, user: "", pass: "",
+                target: "https://httpbin.org/get",
+                title: "Mode 5: Direct HTTPS Proxy (TLS to Proxy, No Auth)",
+                desc: "Direct TLS handshake to proxy itself before sending CONNECT &bull; Double TLS layer (Proxy TLS + Target TLS) &bull; Passthrough tunnel.",
+                anchor: "Proxy Server CA + Target Root CA", icon: "fa-lock"
+            },
+            6: {
+                id: 6, name: "HTTPS Proxy + Auth", protocol: "HTTPS", mode: "tunnel",
+                host: "127.0.0.1", port: 8443, auth: true, user: "testuser", pass: "testpass",
+                target: "https://httpbin.org/get",
+                title: "Mode 6: Direct HTTPS Proxy with Basic Auth",
+                desc: "TLS encrypted channel to proxy &bull; Authenticated CONNECT tunnel &bull; End-to-end TLS to target.",
+                anchor: "Proxy Server CA + Target Root CA", icon: "fa-shield-halved"
+            },
+            7: {
+                id: 7, name: "HTTPS + TLS Inspection", protocol: "HTTPS", mode: "mitm",
+                host: "127.0.0.1", port: 8443, auth: false, user: "", pass: "",
+                target: "https://httpbin.org/get",
+                title: "Mode 7: Secure HTTPS Proxy with TLS Inspection",
+                desc: "TLS to proxy &bull; Proxy intercepts target TLS &bull; Requires proxy server CA and proxy inspection root CA.",
+                anchor: "Candidate Root CA", icon: "fa-user-ninja"
+            },
+            8: {
+                id: 8, name: "HTTPS + MITM + Auth", protocol: "HTTPS", mode: "mitm",
+                host: "127.0.0.1", port: 8443, auth: true, user: "testuser", pass: "testpass",
+                target: "https://httpbin.org/get",
+                title: "Mode 8: Secure HTTPS Proxy with Auth & Inspection (Full Suite)",
+                desc: "All layers active: Direct TLS to proxy + Proxy-Authorization credentials + TLS interception re-signing.",
+                anchor: "Candidate Root CA", icon: "fa-fingerprint"
+            },
+            9: {
+                id: 9, name: "Direct Connection", protocol: "HTTP", mode: "tunnel",
+                host: "", port: 80, auth: false, user: "", pass: "",
+                target: "https://httpbin.org/get",
+                title: "Mode 9: Direct Internet Connection (No Proxy)",
+                desc: "Standard direct outbound TLS connection &bull; No intermediary proxy &bull; Validated directly against JVM public roots.",
+                anchor: "Default JVM Public Root", icon: "fa-arrow-right"
+            }
+        };
+
+        function applyCombination(id) {
+            const combo = combinations[id];
+            if (!combo) return;
+
+            // Highlight active card
+            for (let i = 1; i <= 9; i++) {
+                const card = document.getElementById(`comboCard-${i}`);
+                if (card) {
+                    if (i === id) {
+                        card.classList.add('matrix-active');
+                    } else {
+                        card.classList.remove('matrix-active');
+                    }
+                }
+            }
+
+            // Update form fields
+            document.getElementById('targetUrl').value = combo.target;
+            document.getElementById('proxyHost').value = combo.host;
+            document.getElementById('proxyPort').value = combo.port;
+
+            // Update Protocol Radio
+            const radio = document.querySelector(`input[name="proxyProtocol"][value="${combo.protocol}"]`);
+            if (radio) radio.checked = true;
+
+            // Update Mode
+            setProxyMode(combo.mode, false);
+
+            // Update Auth
+            const authFields = document.getElementById('authFields');
+            const authChevron = document.getElementById('authChevron');
+            const authBadge = document.getElementById('authBadge');
+            const user = document.getElementById('proxyUser');
+            const pass = document.getElementById('proxyPass');
+
+            user.value = combo.user;
+            pass.value = combo.pass;
+
+            if (combo.auth) {
+                authFields.classList.remove('hidden');
+                authChevron.classList.add('rotate-180');
+                authBadge.innerText = "Basic Auth (" + combo.user + ")";
+                authBadge.className = "text-[10px] text-amber-400 font-semibold";
+            } else {
+                authFields.classList.add('hidden');
+                authChevron.classList.remove('rotate-180');
+                authBadge.innerText = "Anonymous";
+                authBadge.className = "text-[10px] text-slate-500";
+            }
+
+            // Update Blueprint Banner
+            document.getElementById('blueprintTitle').innerText = combo.title;
+            document.getElementById('blueprintDesc').innerHTML = combo.desc;
+            document.getElementById('blueprintAnchorBadge').innerText = combo.anchor;
+            document.getElementById('blueprintIcon').className = `fa-solid ${combo.icon} text-cyan-400 text-sm`;
+
+            const modeBadge = document.getElementById('blueprintModeBadge');
+            if (combo.mode === 'mitm') {
+                modeBadge.innerText = "TLS MITM Inspection";
+                modeBadge.className = "text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30";
+            } else {
+                modeBadge.innerText = "Passthrough Tunnel";
+                modeBadge.className = "text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+            }
+        }
+
+        function setProxyMode(mode, updateMatrix = true) {
+            currentMode = mode;
+            const btnTunnel = document.getElementById('btnModeTunnel');
+            const btnMitm = document.getElementById('btnModeMitm');
+
+            if (mode === 'tunnel') {
+                btnTunnel.className = "p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/50 text-left transition flex items-center gap-2";
+                btnMitm.className = "p-2 rounded-lg bg-slate-950 border border-slate-800 text-left transition flex items-center gap-2 opacity-70";
+            } else {
+                btnMitm.className = "p-2 rounded-lg bg-rose-950/30 border border-rose-500/50 text-left transition flex items-center gap-2";
+                btnTunnel.className = "p-2 rounded-lg bg-slate-950 border border-slate-800 text-left transition flex items-center gap-2 opacity-70";
+            }
+
+            if (updateMatrix) syncInputsToMatrix();
+        }
+
+        function setTargetPreset(url) {
+            document.getElementById('targetUrl').value = url;
+            syncInputsToMatrix();
+        }
+
+        function syncInputsToMatrix() {
+            const host = document.getElementById('proxyHost').value.trim();
+            const port = parseInt(document.getElementById('proxyPort').value, 10);
+            const protocol = document.querySelector('input[name="proxyProtocol"]:checked').value;
+            const user = document.getElementById('proxyUser').value.trim();
+
+            let matchedId = null;
+            if (!host || port === 80) {
+                matchedId = 9;
+            } else if (protocol === 'HTTP' && port === 3128) {
+                matchedId = 1;
+            } else if (protocol === 'HTTP' && port === 3129) {
+                matchedId = 2;
+            } else if (protocol === 'HTTP' && port === 8888 && !user) {
+                matchedId = 3;
+            } else if (protocol === 'HTTP' && port === 8888 && user) {
+                matchedId = 4;
+            } else if (protocol === 'HTTPS' && currentMode === 'tunnel' && !user) {
+                matchedId = 5;
+            } else if (protocol === 'HTTPS' && currentMode === 'tunnel' && user) {
+                matchedId = 6;
+            } else if (protocol === 'HTTPS' && currentMode === 'mitm' && !user) {
+                matchedId = 7;
+            } else if (protocol === 'HTTPS' && currentMode === 'mitm' && user) {
+                matchedId = 8;
+            }
+
+            if (matchedId) {
+                for (let i = 1; i <= 9; i++) {
+                    const card = document.getElementById(`comboCard-${i}`);
+                    if (card) {
+                        if (i === matchedId) {
+                            card.classList.add('matrix-active');
+                        } else {
+                            card.classList.remove('matrix-active');
+                        }
+                    }
+                }
+            }
+        }
+
+        function toggleAuth() {
+            const fields = document.getElementById('authFields');
+            const chevron = document.getElementById('authChevron');
+            const authBadge = document.getElementById('authBadge');
+            const user = document.getElementById('proxyUser').value.trim();
+
+            if (fields.classList.contains('hidden')) {
+                fields.classList.remove('hidden');
+                chevron.classList.add('rotate-180');
+                authBadge.innerText = user ? "Basic Auth (" + user + ")" : "Configuring Auth";
+                authBadge.className = "text-[10px] text-amber-400 font-semibold";
+            } else {
+                fields.classList.add('hidden');
+                chevron.classList.remove('rotate-180');
+                authBadge.innerText = user ? "Basic Auth Set" : "Anonymous";
+            }
+            syncInputsToMatrix();
+        }
+
+        function switchRightTab(tab) {
+            const logsTab = document.getElementById('tabContentLogs');
+            const storeTab = document.getElementById('tabContentStore');
+            const btnLogs = document.getElementById('tabBtnLogs');
+            const btnStore = document.getElementById('tabBtnStore');
+
+            if (tab === 'logs') {
+                logsTab.classList.remove('hidden');
+                storeTab.classList.add('hidden');
+                btnLogs.className = "flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-slate-800 text-cyan-400 transition flex items-center justify-center gap-2";
+                btnStore.className = "flex-1 py-2 px-3 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-2";
+            } else {
+                logsTab.classList.add('hidden');
+                storeTab.classList.remove('hidden');
+                btnStore.className = "flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-slate-800 text-cyan-400 transition flex items-center justify-center gap-2";
+                btnLogs.className = "flex-1 py-2 px-3 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-2";
+                loadTrustStore();
+            }
+        }
+
+        async function loadTestHarnessMitmCert() {
+            try {
+                const res = await fetch('/api/test-harness/mitm-cert');
+                const data = await res.json();
+                if (data.status === 'FOUND' && data.pem) {
+                    document.getElementById('candidatePem').value = data.pem;
+                    applyCombination(3);
+                    alert("Loaded test-harness mitmproxy Root CA into candidate input!");
+                } else {
+                    alert("Test harness mitmproxy cert not found on disk yet. Start the docker harness first!");
+                }
+            } catch (e) {
+                alert("Failed to load test harness cert: " + e.message);
+            }
+        }
+
+        async function loadTestHarnessHttpsProxyCert() {
+            try {
+                const res = await fetch('/api/test-harness/https-proxy-cert');
+                const data = await res.json();
+                if (data.status === 'FOUND' && data.pem) {
+                    document.getElementById('candidatePem').value = data.pem;
+                    applyCombination(5);
+                    alert("Loaded test-harness HTTPS Proxy CA (:8443) into candidate input!");
+                } else {
+                    alert("Test harness HTTPS proxy cert not found on disk yet. Start squid-https in docker first!");
+                }
+            } catch (e) {
+                alert("Failed to load HTTPS proxy cert: " + e.message);
+            }
+        }
+
+        async function executeProbe(isStep2InMemory) {
+            const targetUrl = document.getElementById('targetUrl').value.trim();
+            const host = document.getElementById('proxyHost').value.trim();
+            const port = parseInt(document.getElementById('proxyPort').value, 10);
+            const protocol = document.querySelector('input[name="proxyProtocol"]:checked').value;
+            const user = document.getElementById('proxyUser').value.trim();
+            const pass = document.getElementById('proxyPass').value;
+            const candidatePem = isStep2InMemory ? document.getElementById('candidatePem').value.trim() : null;
+
+            const payload = {
+                targetUrl: targetUrl,
+                proxy: {
+                    host: host || null,
+                    port: port || null,
+                    protocol: protocol,
+                    username: user || null,
+                    password: pass || null
+                },
+                candidateRootPem: candidatePem
+            };
+
+            setLoading(true, isStep2InMemory ? "Verifying with Candidate Root CA in Memory..." : "Probing Connection via Proxy...");
+
+            try {
+                const res = await fetch('/api/proxy/probe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                lastProbeResponse = data;
+                renderProbeResponse(data, isStep2InMemory);
+            } catch (err) {
+                renderError(err.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function renderProbeResponse(data, isStep2) {
+            // Append diagnostic logs to tab
+            renderLogs(data.diagnosticLogs);
+
+            // Render certificate chain
+            renderChain(data.capturedChain);
+
+            const statusBanner = document.getElementById('statusBanner');
+            const statusIcon = document.getElementById('statusIcon');
+            const statusTitle = document.getElementById('statusTitle');
+            const statusDesc = document.getElementById('statusDesc');
+            const btnCommit = document.getElementById('btnCommit');
+            const commitBtnText = document.getElementById('commitBtnText');
+
+            const anchorCard = document.getElementById('anchorCard');
+            const anchorBadge = document.getElementById('anchorSourceBadge');
+            const anchorSubject = document.getElementById('anchorSubject');
+            const anchorIssuer = document.getElementById('anchorIssuer');
+            const anchorFingerprint = document.getElementById('anchorFingerprint');
+            const anchorSelfSigned = document.getElementById('anchorSelfSigned');
+            const anchorGuidance = document.getElementById('anchorGuidanceText');
+
+            if (data.status === 'SUCCESS') {
+                statusBanner.className = "bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-5 shadow-sm";
+                statusIcon.className = "h-10 w-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0";
+                statusIcon.innerHTML = '<i class="fa-solid fa-circle-check text-xl"></i>';
+                statusTitle.innerText = "Connection Established (HTTP " + data.httpStatusCode + ")";
+                statusTitle.className = "text-sm font-bold text-emerald-300";
+                statusDesc.innerText = data.message;
+
+                // Render Isolated Trust Anchor Details
+                if (data.verifiedTrustAnchor) {
+                    anchorCard.classList.remove('hidden');
+                    anchorSubject.innerText = data.verifiedTrustAnchor.subjectDn;
+                    anchorIssuer.innerText = data.verifiedTrustAnchor.issuerDn;
+                    anchorFingerprint.innerText = data.verifiedTrustAnchor.sha256Fingerprint;
+                    anchorSelfSigned.innerText = data.verifiedTrustAnchor.selfSigned ? "Yes (Root CA)" : "No";
+
+                    if (data.anchorFromCandidateInput) {
+                        // User input candidate was REQUIRED!
+                        anchorCard.className = "bg-emerald-950/30 border border-emerald-500/40 rounded-xl p-5 shadow-sm flex flex-col gap-3";
+                        anchorBadge.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase";
+                        anchorBadge.innerText = "Candidate Input CA (Required)";
+                        anchorGuidance.className = "text-[11px] text-emerald-300/90 leading-relaxed bg-emerald-950/40 p-2.5 rounded border border-emerald-500/30";
+                        anchorGuidance.innerHTML = `
+                            <b>🎯 Isolated Active Trust Anchor:</b> This connection strictly REQUIRED your candidate Root CA. 
+                            The certificate was verified in ephemeral memory and is now eligible to be saved to the persistent BCFKS trust store.
+                            <div class="mt-2 pt-1 border-t border-emerald-500/20">
+                                <button type="button" onclick="inspectDirectCert(lastProbeResponse.verifiedTrustAnchor)" class="text-[11px] text-emerald-300 hover:text-white font-semibold flex items-center gap-1.5 underline">
+                                    <i class="fa-solid fa-graduation-cap"></i> View Full Cryptographic Details & PKI Role
+                                </button>
+                            </div>
+                        `;
+
+                        // Enable Step 3 Commit button!
+                        btnCommit.disabled = false;
+                        btnCommit.className = "w-full py-2.5 px-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20";
+                        commitBtnText.innerText = "Step 3: Commit Verified Root CA to BCFKS Store";
+
+                        // Ensure candidate PEM is set to verified anchor PEM
+                        if (data.verifiedTrustAnchor.pem) {
+                            document.getElementById('candidatePem').value = data.verifiedTrustAnchor.pem;
+                        }
+
+                    } else {
+                        // Existing System Anchor was used!
+                        anchorCard.className = "bg-blue-950/30 border border-blue-500/40 rounded-xl p-5 shadow-sm flex flex-col gap-3";
+                        anchorBadge.className = "text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 uppercase";
+                        anchorBadge.innerText = "Existing Persistent Root";
+                        anchorGuidance.className = "text-[11px] text-blue-300/90 leading-relaxed bg-blue-950/40 p-2.5 rounded border border-blue-500/30";
+                        anchorGuidance.innerHTML = `
+                            <b>🛡️ Existing Anchor Active:</b> The connection succeeded using an already-trusted public/system root CA. 
+                            The candidate Root CA was <b>NOT</b> required. To protect against keystore pollution, <b>committing is blocked</b>.
+                            <div class="mt-2 pt-1 border-t border-blue-500/20">
+                                <button type="button" onclick="inspectDirectCert(lastProbeResponse.verifiedTrustAnchor)" class="text-[11px] text-blue-300 hover:text-white font-semibold flex items-center gap-1.5 underline">
+                                    <i class="fa-solid fa-graduation-cap"></i> View Full Cryptographic Details & PKI Role
+                                </button>
+                            </div>
+                        `;
+
+                        // Block Commit to ensure ONLY required anchors are committed!
+                        btnCommit.disabled = true;
+                        btnCommit.className = "w-full py-2.5 px-3 bg-slate-800 text-slate-500 cursor-not-allowed font-bold rounded-lg text-xs transition flex items-center justify-center gap-2";
+                        commitBtnText.innerText = "Step 3: Commit Blocked (Anchor Was Not Required)";
+                    }
+                }
+
+            } else if (data.status === 'FAILED_UNTRUSTED_ROOT' || data.status === 'FAILED_UNTRUSTED_PROXY') {
+                statusBanner.className = "bg-amber-950/40 border border-amber-500/40 rounded-xl p-5 shadow-sm";
+                statusIcon.className = "h-10 w-10 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0";
+                statusIcon.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-xl"></i>';
+                statusTitle.innerText = "TLS Handshake Failed: Untrusted Certificate";
+                statusTitle.className = "text-sm font-bold text-amber-300";
+                statusDesc.innerText = data.message;
+
+                // Hide Anchor Card since connection failed
+                anchorCard.classList.add('hidden');
+                btnCommit.disabled = true;
+                btnCommit.className = "w-full py-2.5 px-3 bg-slate-800 text-slate-500 cursor-not-allowed font-bold rounded-lg text-xs transition flex items-center justify-center gap-2";
+                commitBtnText.innerText = "Step 3: Commit (Awaiting Verification)";
+
+                // Show Missing Cert Summary Box
+                const missingBox = document.getElementById('missingCertSummary');
+                if (missingBox) missingBox.classList.remove('hidden');
+                if (data.missingTrustAnchor) {
+                    document.getElementById('missingSubject').innerText = data.missingTrustAnchor.subjectDn;
+                    document.getElementById('missingIssuer').innerText = data.missingTrustAnchor.issuerDn;
+                    document.getElementById('missingFp').innerText = data.missingTrustAnchor.sha256Fingerprint;
+
+                    if (data.missingTrustAnchor.pem) {
+                        document.getElementById('btnAutoFillPem').classList.remove('hidden');
+                        const pemArea = document.getElementById('candidatePem');
+                        if (!pemArea.value.trim()) {
+                            pemArea.value = data.missingTrustAnchor.pem;
+                        }
+                    }
+                }
+
+            } else if (data.status === 'FAILED_PROXY_AUTH') {
+                statusBanner.className = "bg-red-950/40 border border-red-500/40 rounded-xl p-5 shadow-sm";
+                statusIcon.className = "h-10 w-10 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center shrink-0";
+                statusIcon.innerHTML = '<i class="fa-solid fa-user-xmark text-xl"></i>';
+                statusTitle.innerText = "Proxy Authentication Required (HTTP 407)";
+                statusTitle.className = "text-sm font-bold text-red-300";
+                statusDesc.innerText = data.message;
+                anchorCard.classList.add('hidden');
+                btnCommit.disabled = true;
+            } else {
+                statusBanner.className = "bg-red-950/40 border border-red-500/40 rounded-xl p-5 shadow-sm";
+                statusIcon.className = "h-10 w-10 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center shrink-0";
+                statusIcon.innerHTML = '<i class="fa-solid fa-circle-xmark text-xl"></i>';
+                statusTitle.innerText = "Connection Failed";
+                statusTitle.className = "text-sm font-bold text-red-300";
+                statusDesc.innerText = data.message;
+                anchorCard.classList.add('hidden');
+                btnCommit.disabled = true;
+            }
+        }
+
+        function autoFillPresentedPem() {
+            if (lastProbeResponse && lastProbeResponse.missingTrustAnchor && lastProbeResponse.missingTrustAnchor.pem) {
+                document.getElementById('candidatePem').value = lastProbeResponse.missingTrustAnchor.pem;
+            }
+        }
+
+        async function executeCommit() {
+            const pem = document.getElementById('candidatePem').value.trim();
+            if (!pem) {
+                alert("Please provide the candidate Root CA PEM to commit.");
+                return;
+            }
+            try {
+                const res = await fetch('/api/proxy/commit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rootPem: pem })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert("🎉 Success! " + data.message + "\nAlias: " + data.alias);
+                    loadTrustStore();
+                    switchRightTab('store');
+                } else {
+                    alert("Commit rejected: " + data.message);
+                }
+            } catch (e) {
+                alert("Failed to commit: " + e.message);
+            }
+        }
+
+        async function executeDirectImport() {
+            const alias = document.getElementById('directAlias').value.trim();
+            const pem = document.getElementById('directPem').value.trim();
+            if (!pem) {
+                alert("Please provide the Root CA PEM to import.");
+                return;
+            }
+            try {
+                const res = await fetch('/api/proxy/commit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rootPem: pem, alias: alias || null })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert("🎉 Success! " + data.message + "\nAlias: " + data.alias);
+                    document.getElementById('directAlias').value = '';
+                    document.getElementById('directPem').value = '';
+                    loadTrustStore();
+                } else {
+                    alert("Import rejected: " + data.message);
+                }
+            } catch (e) {
+                alert("Failed to import: " + e.message);
+            }
+        }
+
+        function renderLogs(logs) {
+            const container = document.getElementById('liveLogsContainer');
+            if (!logs || logs.length === 0) return;
+            container.innerHTML = '';
+            logs.forEach(line => {
+                const div = document.createElement('div');
+                div.className = "leading-tight py-0.5 border-b border-slate-800/40";
+                div.textContent = line;
+                container.appendChild(div);
+            });
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function renderChain(chain) {
+            const countBadge = document.getElementById('chainCountBadge');
+            const timeline = document.getElementById('chainTimeline');
+            if (!chain || chain.length === 0) {
+                countBadge.innerText = '0 certificates';
+                timeline.innerHTML = '<p class="text-slate-500 italic text-xs py-4 text-center">No certificates captured in this probe.</p>';
+                return;
+            }
+
+            countBadge.innerText = chain.length + ' certificates';
+            timeline.innerHTML = '';
+
+            chain.forEach((cert, idx) => {
+                const isLeaf = (idx === 0);
+                const isRoot = cert.selfSigned;
+                const role = isLeaf ? 'Leaf / Server Certificate' : (isRoot ? 'Root CA Certificate' : 'Intermediate CA');
+                const badgeColor = isLeaf ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20' : (isRoot ? 'text-purple-400 bg-purple-500/10 border-purple-500/20' : 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20');
+
+                const card = document.createElement('div');
+                card.className = "p-3 bg-slate-950/80 border border-slate-800 rounded-lg flex flex-col gap-1 font-mono-code";
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-bold ${badgeColor} px-2 py-0.5 rounded border">[${idx}] ${role}</span>
+                        <div class="flex items-center gap-2">
+                            ${cert.selfSigned ? '<span class="text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">Self-Signed</span>' : ''}
+                            <button id="btnChainInsp-${idx}" class="text-[11px] text-cyan-400 hover:text-cyan-300 font-sans font-semibold flex items-center gap-1 transition" title="Inspect Certificate Details">
+                                <i class="fa-solid fa-graduation-cap"></i> Inspect
+                            </button>
+                        </div>
+                    </div>
+                    <div class="text-[11px] text-slate-300 truncate" title="${cert.subjectDn}"><span class="text-slate-500">Subject:</span> ${cert.subjectDn}</div>
+                    <div class="text-[11px] text-slate-400 truncate" title="${cert.issuerDn}"><span class="text-slate-500">Issuer:</span> ${cert.issuerDn}</div>
+                    <div class="text-[10px] text-slate-500">Fingerprint: <span class="text-slate-400">${cert.sha256Fingerprint}</span></div>
+                `;
+                timeline.appendChild(card);
+                const btn = document.getElementById(`btnChainInsp-${idx}`);
+                if (btn) btn.onclick = () => inspectDirectCert(cert);
+            });
+        }
+
+        function inspectDirectCert(cert) {
+            currentInspectedCert = cert;
+            switchScreen('truststore');
+            renderCertificateInspector(cert);
+        }
+
+        // Screen Navigation
+        function switchScreen(screen) {
+            const probeScreen = document.getElementById('screenProbe');
+            const storeScreen = document.getElementById('screenTrustStore');
+            const navBtnProbe = document.getElementById('navBtnProbe');
+            const navBtnTrustStore = document.getElementById('navBtnTrustStore');
+
+            if (screen === 'probe') {
+                probeScreen.classList.remove('hidden');
+                storeScreen.classList.add('hidden');
+                navBtnProbe.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 shadow";
+                navBtnTrustStore.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 text-slate-400 hover:text-slate-200";
+            } else {
+                probeScreen.classList.add('hidden');
+                storeScreen.classList.remove('hidden');
+                navBtnTrustStore.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 bg-purple-500/10 text-purple-300 border border-purple-500/30 shadow";
+                navBtnProbe.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 text-slate-400 hover:text-slate-200";
+                if (allTrustStoreEntries.length === 0) {
+                    loadAllTrustStoreCAs();
+                }
+            }
+        }
+
+        // Global Toast Notification
+        function showToast(message) {
+            let toast = document.getElementById('globalToast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'globalToast';
+                toast.className = "fixed bottom-5 right-5 z-50 bg-slate-900 border border-cyan-500/40 text-cyan-300 px-4 py-2.5 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 transition-all transform translate-y-2 opacity-0 pointer-events-none";
+                document.body.appendChild(toast);
+            }
+            toast.innerHTML = `<i class="fa-solid fa-circle-check text-cyan-400"></i> <span>${message}</span>`;
+            toast.classList.remove('translate-y-2', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-2', 'opacity-0');
+            }, 2500);
+        }
+
+        // Root CA Explorer State & Logic
+        let allTrustStoreEntries = [];
+        let activeCaFilter = 'all'; // 'all', 'custom', 'system'
+        let currentInspectedCert = null;
+
+        function parseDn(dn) {
+            if (!dn) return { cn: 'Unknown', o: '', c: '' };
+            const cnMatch = dn.match(/(?:^|,\s*)CN=([^,]+)/i);
+            const oMatch = dn.match(/(?:^|,\s*)O=([^,]+)/i);
+            const cMatch = dn.match(/(?:^|,\s*)C=([^,]+)/i);
+            return {
+                cn: cnMatch ? cnMatch[1].trim() : dn,
+                o: oMatch ? oMatch[1].trim() : '',
+                c: cMatch ? cMatch[1].trim() : ''
+            };
+        }
+
+        function formatDate(isoStr) {
+            if (!isoStr) return 'N/A';
+            try {
+                const d = new Date(isoStr);
+                if (isNaN(d.getTime())) return isoStr;
+                return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            } catch (e) {
+                return isoStr;
+            }
+        }
+
+        function getExpiryBadge(isoStr) {
+            if (!isoStr) return { text: 'N/A', cls: 'text-slate-400 bg-slate-800' };
+            try {
+                const d = new Date(isoStr);
+                const now = new Date();
+                if (d < now) {
+                    return { text: 'Expired', cls: 'text-rose-400 bg-rose-500/10 border border-rose-500/20' };
+                }
+                const diffDays = Math.ceil((d - now) / (1000 * 60 * 60 * 24));
+                if (diffDays < 90) {
+                    return { text: `Exp: ${diffDays}d`, cls: 'text-amber-400 bg-amber-500/10 border border-amber-500/20' };
+                }
+                return { text: `Exp: ${formatDate(isoStr)}`, cls: 'text-slate-400 bg-slate-950 border border-slate-800' };
+            } catch (e) {
+                return { text: isoStr, cls: 'text-slate-400 bg-slate-800' };
+            }
+        }
+
+        async function loadAllTrustStoreCAs(forceRefresh) {
+            try {
+                const res = await fetch('/api/truststore');
+                const entries = await res.json();
+                allTrustStoreEntries = entries;
+
+                const total = entries.length;
+                const custom = entries.filter(e => !e.systemRoot).length;
+                const system = entries.filter(e => e.systemRoot).length;
+
+                const navBadge = document.getElementById('navStoreCountBadge');
+                if (navBadge) navBadge.innerText = total;
+                const storeCnt = document.getElementById('storeCount');
+                if (storeCnt) storeCnt.innerText = total;
+                const totalBadge = document.getElementById('trustStoreTotalBadge');
+                if (totalBadge) totalBadge.innerText = `${total} Root Anchors`;
+
+                document.getElementById('countAll').innerText = total;
+                document.getElementById('countCustom').innerText = custom;
+                document.getElementById('countSystem').innerText = system;
+
+                filterCaList();
+
+                // If no cert is currently inspected, select first entry
+                if (entries.length > 0 && (!currentInspectedCert || !entries.some(e => e.alias === currentInspectedCert.alias))) {
+                    const first = entries.find(e => !e.systemRoot) || entries[0];
+                    selectCertificate(first.alias);
+                }
+            } catch (e) {
+                console.error("Failed to load Root CAs:", e);
+            }
+        }
+
+        function setCaFilter(filter) {
+            activeCaFilter = filter;
+            const btnAll = document.getElementById('filterBtnAll');
+            const btnCustom = document.getElementById('filterBtnCustom');
+            const btnSystem = document.getElementById('filterBtnSystem');
+
+            const activeCls = "px-3 py-1 rounded-md font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 transition";
+            const inactiveCls = "px-3 py-1 rounded-md font-semibold text-slate-400 hover:text-slate-200 transition";
+
+            btnAll.className = filter === 'all' ? activeCls : inactiveCls;
+            btnCustom.className = filter === 'custom' ? activeCls : inactiveCls;
+            btnSystem.className = filter === 'system' ? activeCls : inactiveCls;
+
+            filterCaList();
+        }
+
+        function filterCaList() {
+            const query = (document.getElementById('caSearchInput').value || '').toLowerCase().trim();
+            let filtered = allTrustStoreEntries.filter(entry => {
+                if (activeCaFilter === 'custom' && entry.systemRoot) return false;
+                if (activeCaFilter === 'system' && !entry.systemRoot) return false;
+                if (!query) return true;
+
+                const dn = (entry.subjectDn || '').toLowerCase();
+                const issuer = (entry.issuerDn || '').toLowerCase();
+                const alias = (entry.alias || '').toLowerCase();
+                return dn.includes(query) || issuer.includes(query) || alias.includes(query);
+            });
+
+            renderCaCards(filtered);
+        }
+
+        function renderCaCards(entries) {
+            const container = document.getElementById('caCardsContainer');
+            const showingBadge = document.getElementById('showingCountBadge');
+            showingBadge.innerText = `Showing ${entries.length} CAs`;
+
+            if (entries.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 text-slate-500 flex flex-col items-center gap-2">
+                        <i class="fa-solid fa-magnifying-glass text-2xl text-slate-600"></i>
+                        <p class="text-xs">No Root CAs matched the search or filter criteria.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = '';
+            entries.forEach(entry => {
+                const parsed = parseDn(entry.subjectDn);
+                const expiry = getExpiryBadge(entry.notAfter);
+                const isSelected = currentInspectedCert && currentInspectedCert.alias === entry.alias;
+                const isCustom = !entry.systemRoot;
+
+                const card = document.createElement('div');
+                card.id = `caCard-${entry.alias}`;
+                card.onclick = () => selectCertificate(entry.alias);
+                card.className = `p-3.5 rounded-xl border cursor-pointer transition flex flex-col gap-2 ${
+                    isSelected 
+                    ? 'bg-slate-900 border-purple-500/60 shadow-lg shadow-purple-500/10' 
+                    : 'bg-slate-950/70 border-slate-800/90 hover:border-slate-700 hover:bg-slate-900/60'
+                }`;
+
+                const keyLabel = entry.keyAlgorithm ? `${entry.keyAlgorithm} ${entry.keySize ? entry.keySize : ''}`.trim() : 'RSA 2048';
+
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="flex items-start gap-2.5 min-w-0">
+                            <div class="h-8 w-8 rounded-lg ${isCustom ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' : 'bg-purple-500/10 text-purple-400 border border-purple-500/30'} flex items-center justify-center shrink-0 text-sm mt-0.5">
+                                <i class="${isCustom ? 'fa-solid fa-shield-cat' : 'fa-solid fa-building-columns'}"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <div class="font-bold text-xs text-white truncate font-mono-code" title="${parsed.cn}">${parsed.cn}</div>
+                                ${parsed.o ? `<div class="text-[11px] text-slate-400 truncate" title="${parsed.o}">${parsed.o}</div>` : ''}
+                            </div>
+                        </div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded ${isCustom ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'} shrink-0 uppercase">
+                            ${isCustom ? 'Custom' : 'System'}
+                        </span>
+                    </div>
+
+                    <div class="text-[10px] text-slate-500 font-mono-code truncate">
+                        Alias: <span class="text-slate-400">${entry.alias}</span>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-1.5 text-[10px] pt-1 border-t border-slate-900">
+                        <span class="px-1.5 py-0.5 rounded bg-slate-900 text-cyan-400 font-mono-code border border-slate-800">${keyLabel}</span>
+                        ${entry.selfSigned ? '<span class="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Self-Signed</span>' : ''}
+                        <span class="px-1.5 py-0.5 rounded font-mono-code ${expiry.cls}">${expiry.text}</span>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        async function selectCertificate(alias) {
+            try {
+                // Highlight active card
+                document.querySelectorAll('#caCardsContainer > div').forEach(c => {
+                    c.classList.remove('bg-slate-900', 'border-purple-500/60', 'shadow-lg', 'shadow-purple-500/10');
+                    c.classList.add('bg-slate-950/70', 'border-slate-800/90');
+                });
+                const activeCard = document.getElementById(`caCard-${alias}`);
+                if (activeCard) {
+                    activeCard.classList.remove('bg-slate-950/70', 'border-slate-800/90');
+                    activeCard.classList.add('bg-slate-900', 'border-purple-500/60', 'shadow-lg', 'shadow-purple-500/10');
+                }
+
+                const res = await fetch(`/api/truststore/${encodeURIComponent(alias)}`);
+                if (!res.ok) {
+                    throw new Error("Certificate detail not found for " + alias);
+                }
+                const detail = await res.json();
+                currentInspectedCert = detail;
+                renderCertificateInspector(detail);
+            } catch (e) {
+                console.error("Failed to fetch certificate detail:", e);
+                showToast("Failed to load details: " + e.message);
+            }
+        }
+
+        function formatEducationalText(text) {
+            if (!text) return '<p class="text-slate-400 italic">No explanation generated.</p>';
+            return text.split('\n\n').map(paragraph => {
+                let formatted = paragraph
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+                    .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-cyan-300 font-mono-code text-[11px]">$1</code>');
+                return `<p class="leading-relaxed mb-2">${formatted}</p>`;
+            }).join('');
+        }
+
+        function renderCertificateInspector(detail) {
+            document.getElementById('inspectorEmptyState').classList.add('hidden');
+            document.getElementById('inspectorActiveContent').classList.remove('hidden');
+
+            const parsed = parseDn(detail.subjectDn);
+            const isCustom = detail.alias && !detail.alias.startsWith('system-');
+
+            document.getElementById('inspCommonName').innerText = parsed.cn;
+            document.getElementById('inspOrg').innerText = parsed.o ? (parsed.c ? `${parsed.o} (${parsed.c})` : parsed.o) : detail.subjectDn;
+            document.getElementById('inspAlias').innerText = detail.alias || 'unnamed';
+
+            // Type Badge
+            const typeBadge = document.getElementById('inspTypeBadge');
+            typeBadge.innerText = isCustom ? 'CUSTOM ROOT CA' : 'SYSTEM JVM ROOT';
+            typeBadge.className = isCustom 
+                ? 'text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                : 'text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30';
+
+            // Self-Signed Badge
+            const selfSignedBadge = document.getElementById('inspSelfSignedBadge');
+            if (detail.selfSigned) {
+                selfSignedBadge.classList.remove('hidden');
+                selfSignedBadge.innerText = 'SELF-SIGNED ROOT';
+            } else {
+                selfSignedBadge.classList.add('hidden');
+            }
+
+            // Delete button for custom anchors
+            const btnDelete = document.getElementById('btnInspDelete');
+            if (isCustom) {
+                btnDelete.classList.remove('hidden');
+            } else {
+                btnDelete.classList.add('hidden');
+            }
+
+            // Educational PKI Breakdown Box
+            document.getElementById('inspEducationalText').innerHTML = formatEducationalText(detail.educationalExplanation);
+
+            // Technical Attributes
+            document.getElementById('inspSubjectDn').innerText = detail.subjectDn;
+            document.getElementById('inspIssuerDn').innerText = detail.issuerDn;
+            document.getElementById('inspNotBefore').innerText = formatDate(detail.notBefore) + ` (${detail.notBefore || ''})`;
+            document.getElementById('inspNotAfter').innerText = formatDate(detail.notAfter) + ` (${detail.notAfter || ''})`;
+            document.getElementById('inspKeyDetails').innerText = `${detail.keyAlgorithm || 'RSA'} (${detail.keySize ? detail.keySize + ' bits' : 'Unknown'})`;
+            document.getElementById('inspSigAlg').innerText = detail.sigAlgName || 'Unknown';
+            document.getElementById('inspBasicConstraints').innerText = detail.basicConstraints || 'CA=true';
+            document.getElementById('inspSerial').innerText = detail.serialNumber || 'N/A';
+
+            // Key Usages
+            const kuContainer = document.getElementById('inspKeyUsagesContainer');
+            kuContainer.innerHTML = '';
+            if (detail.keyUsage && detail.keyUsage.length > 0) {
+                detail.keyUsage.forEach(ku => {
+                    const span = document.createElement('span');
+                    span.className = "px-2 py-0.5 rounded bg-slate-900 text-indigo-300 border border-indigo-500/30 font-mono-code text-[10px]";
+                    span.innerText = ku;
+                    kuContainer.appendChild(span);
+                });
+            } else {
+                kuContainer.innerHTML = '<span class="text-slate-500 italic">None specified</span>';
+            }
+
+            // Fingerprints
+            document.getElementById('inspSha256').innerText = detail.sha256Fingerprint || 'N/A';
+            document.getElementById('inspSha1').innerText = detail.sha1Fingerprint || 'N/A';
+
+            // PEM
+            document.getElementById('inspPemBlock').value = detail.pem || '';
+        }
+
+        function copyElementText(elementId, isValue) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const text = isValue ? el.value : el.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                showToast("Copied to clipboard!");
+            }).catch(err => {
+                console.error("Clipboard copy failed:", err);
+            });
+        }
+
+        function useCertInProbe() {
+            if (!currentInspectedCert) return;
+            switchScreen('probe');
+            if (currentInspectedCert.pem) {
+                document.getElementById('candidatePem').value = currentInspectedCert.pem;
+                showToast(`Loaded '${currentInspectedCert.alias}' into Candidate CA input!`);
+            }
+        }
+
+        async function deleteCurrentInspectedCa() {
+            if (!currentInspectedCert) return;
+            const alias = currentInspectedCert.alias;
+            if (!confirm(`Are you sure you want to delete Root CA anchor '${alias}' from the persistent trust store?`)) {
+                return;
+            }
+            try {
+                const res = await fetch(`/api/truststore/${encodeURIComponent(alias)}`, { method: 'DELETE' });
+                if (res.ok || res.status === 204) {
+                    showToast(`Deleted anchor '${alias}'`);
+                    currentInspectedCert = null;
+                    document.getElementById('inspectorActiveContent').classList.add('hidden');
+                    document.getElementById('inspectorEmptyState').classList.remove('hidden');
+                    loadAllTrustStoreCAs(true);
+                    loadTrustStore();
+                } else {
+                    showToast("Failed to delete certificate.");
+                }
+            } catch (e) {
+                showToast("Error deleting certificate: " + e.message);
+            }
+        }
+
+        function openDirectImportModal() {
+            document.getElementById('modalAlias').value = '';
+            document.getElementById('modalPem').value = '';
+            document.getElementById('directImportModal').classList.remove('hidden');
+        }
+
+        function closeDirectImportModal() {
+            document.getElementById('directImportModal').classList.add('hidden');
+        }
+
+        async function executeModalImport() {
+            const alias = document.getElementById('modalAlias').value.trim();
+            const pem = document.getElementById('modalPem').value.trim();
+            if (!pem) {
+                alert("Please provide the Root CA PEM to import.");
+                return;
+            }
+            try {
+                const res = await fetch('/api/proxy/commit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rootPem: pem, alias: alias || null })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast("🎉 Root CA imported successfully!");
+                    closeDirectImportModal();
+                    await loadAllTrustStoreCAs(true);
+                    loadTrustStore();
+                    if (data.alias) {
+                        selectCertificate(data.alias);
+                    }
+                } else {
+                    alert("Import rejected: " + data.message);
+                }
+            } catch (e) {
+                alert("Failed to import: " + e.message);
+            }
+        }
+
+        function inspectFromList(alias) {
+            switchScreen('truststore');
+            selectCertificate(alias);
+        }
+
+        async function loadTrustStore() {
+            try {
+                const res = await fetch('/api/truststore');
+                const list = await res.json();
+                const storeCnt = document.getElementById('storeCount');
+                if (storeCnt) storeCnt.innerText = list.length;
+                const navBadge = document.getElementById('navStoreCountBadge');
+                if (navBadge) navBadge.innerText = list.length;
+
+                const container = document.getElementById('trustStoreList');
+                if (!container) return;
+                container.innerHTML = '';
+
+                if (list.length === 0) {
+                    container.innerHTML = '<p class="text-slate-500 text-xs text-center py-4">No custom trust anchors committed yet.</p>';
+                    return;
+                }
+
+                list.forEach(entry => {
+                    const card = document.createElement('div');
+                    card.className = "p-3 bg-slate-950/80 border border-slate-800 rounded-lg flex flex-col gap-1 text-xs font-mono-code";
+                    card.innerHTML = `
+                        <div class="flex items-center justify-between">
+                            <span class="font-bold text-cyan-400 hover:underline cursor-pointer" onclick="inspectFromList('${entry.alias}')">${entry.alias}</span>
+                            <div class="flex items-center gap-2">
+                                <button onclick="inspectFromList('${entry.alias}')" class="text-slate-400 hover:text-cyan-300 text-[11px]" title="Inspect Details"><i class="fa-solid fa-eye"></i></button>
+                                ${!entry.systemRoot ? `<button onclick="deleteAnchor('${entry.alias}')" class="text-slate-500 hover:text-red-400 text-[11px]" title="Delete"><i class="fa-solid fa-trash"></i></button>` : ''}
+                            </div>
+                        </div>
+                        <div class="text-slate-300 truncate" title="${entry.subjectDn}"><span class="text-slate-500">Subject:</span> ${entry.subjectDn}</div>
+                        <div class="text-[10px] text-slate-500">Fingerprint: ${entry.sha256Fingerprint.substring(0, 23)}...</div>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (e) {
+                console.error("Failed to load truststore:", e);
+            }
+        }
+
+        async function deleteAnchor(alias) {
+            if (!confirm(`Are you sure you want to remove '${alias}' from the persistent BCFKS trust store?`)) return;
+            try {
+                await fetch(`/api/truststore/${alias}`, { method: 'DELETE' });
+                showToast(`Removed '${alias}'`);
+                loadTrustStore();
+                loadAllTrustStoreCAs(true);
+            } catch (e) {
+                alert("Failed to delete: " + e.message);
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('liveLogsContainer').innerHTML = '<div class="text-slate-600 italic">Logs cleared.</div>';
+        }
+
+        function renderError(message) {
+            const banner = document.getElementById('statusBanner');
+            const icon = document.getElementById('statusIcon');
+            banner.className = "bg-red-950/40 border border-red-500/40 rounded-xl p-5 shadow-sm";
+            icon.className = "h-10 w-10 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center shrink-0";
+            icon.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-xl"></i>';
+            document.getElementById('statusTitle').innerText = "Client Error";
+            document.getElementById('statusDesc').innerText = message;
+        }
+
+        function setLoading(isLoading, text) {
+            const btnProbe = document.getElementById('btnProbe');
+            const icon = document.getElementById('statusIcon');
+            if (isLoading) {
+                btnProbe.disabled = true;
+                btnProbe.classList.add('opacity-50');
+                icon.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin text-cyan-400 text-xl"></i>';
+                document.getElementById('statusTitle').innerText = text;
+            } else {
+                btnProbe.disabled = false;
+                btnProbe.classList.remove('opacity-50');
+            }
+        }
+
+        // Initialize on load
+        loadTrustStore();
+        loadAllTrustStoreCAs();
+        applyCombination(3); // Default to mitmproxy inspection
+    </script>
+</body>
+</html>

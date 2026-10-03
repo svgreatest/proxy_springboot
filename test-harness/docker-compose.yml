@@ -1,0 +1,47 @@
+services:
+  # 1. Plain HTTP Forward Proxy (No Auth)
+  squid-plain:
+    image: ubuntu/squid:latest
+    container_name: proxy-squid-plain
+    ports:
+      - "3128:3128"
+    volumes:
+      - ./squid/squid-plain.conf:/etc/squid/squid.conf:ro
+    restart: unless-stopped
+
+  # 2. HTTP Forward Proxy with Basic Authentication (testuser / testpass)
+  squid-auth:
+    image: ubuntu/squid:latest
+    container_name: proxy-squid-auth
+    ports:
+      - "3129:3128"
+    volumes:
+      - ./squid/squid-auth.conf:/etc/squid/squid.conf:ro
+      - ./squid/passwords:/etc/squid/passwords:ro
+    restart: unless-stopped
+
+  # 3. MITM Inspection Proxy (Dynamic TLS Inspection & Custom CA)
+  # Host port 8888 mapped to 8080 inside container (avoids port 8080 conflict with Spring Boot)
+  # Host port 8889 mapped to 8081 for mitmweb dashboard
+  mitmproxy:
+    image: mitmproxy/mitmproxy:latest
+    container_name: proxy-mitmproxy
+    ports:
+      - "8888:8080"
+      - "8889:8081"
+    command: mitmweb --web-host 0.0.0.0 --set block_global=false
+    volumes:
+      - ./mitmproxy/certs:/home/mitmproxy/.mitmproxy
+    restart: unless-stopped
+
+  # 4. HTTPS Forward Proxy (Direct TLS to Proxy on port 8443)
+  squid-https:
+    image: ubuntu/squid:latest
+    container_name: proxy-squid-https
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./squid/squid-https.conf:/etc/squid/squid.conf:ro
+      - ./squid/ssl:/etc/squid/ssl:ro
+    restart: unless-stopped
+
